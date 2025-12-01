@@ -133,6 +133,110 @@ const FeaturesSection = () => {
   );
 };
 
+// Navbar Component (moved outside LandingPage)
+const Navbar = ({ toggleModal }) => {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const toggleMobileMenu = () => {
+    setIsMobileMenuOpen(!isMobileMenuOpen);
+  };
+
+  return (
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/20 backdrop-blur-md border-b border-white/30 px-4 sm:px-6 py-4">
+      <div className="max-w-7xl mx-auto flex justify-between items-center">
+        {/* Logo */}
+        <div className="flex items-center space-x-2">
+          <img src={logo} alt="Company Logo" className="h-8 w-8 sm:h-10 sm:w-10" />
+          <span className="text-lg sm:text-xl font-bold text-gray-800">MediVerse</span>
+        </div>
+
+        {/* Desktop Navigation */}
+        <ul className="hidden md:flex items-center space-x-4 lg:space-x-6">
+          <li>
+            <a href="#home" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium text-sm lg:text-base">
+              Home
+            </a>
+          </li>
+          <li>
+            <a href="#about" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium text-sm lg:text-base">
+              About Us
+            </a>
+          </li>
+          <li>
+            <a href="#contact" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium text-sm lg:text-base">
+              Contact
+            </a>
+          </li>
+          <li>
+            <button 
+              onClick={toggleModal}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 lg:px-6 lg:py-2 rounded-lg transition-all font-medium text-sm lg:text-base shadow-md hover:shadow-lg"
+            >
+              Login
+            </button>
+          </li>
+        </ul>
+
+        {/* Mobile Menu Button */}
+        <div className="md:hidden flex items-center space-x-2">
+          <button 
+            onClick={toggleModal}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition-all font-medium text-sm shadow-md hover:shadow-lg mr-2"
+          >
+            Login
+          </button>
+          <button
+            onClick={toggleMobileMenu}
+            className="text-gray-900 hover:text-indigo-700 transition-colors p-2 rounded-lg"
+            aria-label="Toggle menu"
+          >
+            {isMobileMenuOpen ? (
+              // Close icon (X)
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              // Hamburger icon
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Menu Dropdown */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden absolute top-full left-0 right-0 bg-white/95 backdrop-blur-md border-b border-gray-200 shadow-lg">
+          <div className="px-4 py-3 space-y-3">
+            <a
+              href="#home"
+              className="block text-gray-900 hover:text-indigo-700 transition-colors font-medium py-2 px-3 rounded-lg hover:bg-indigo-50"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              Home
+            </a>
+            <a
+              href="#about"
+              className="block text-gray-900 hover:text-indigo-700 transition-colors font-medium py-2 px-3 rounded-lg hover:bg-indigo-50"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              About Us
+            </a>
+            <a
+              href="#contact"
+              className="block text-gray-900 hover:text-indigo-700 transition-colors font-medium py-2 px-3 rounded-lg hover:bg-indigo-50"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              Contact
+            </a>
+          </div>
+        </div>
+      )}
+    </nav>
+  );
+};
+
 const LandingPage = () => {
   const [showModal, setShowModal] = useState(false);
   const [step, setStep] = useState("login");
@@ -200,6 +304,13 @@ const LandingPage = () => {
       });
       if (response.status === 200) {
         localStorage.setItem("userRole", role);
+        localStorage.setItem("userData", JSON.stringify({ 
+        email: email,
+        fullName: fullName,
+        role: role 
+      }));
+      
+      alert("Registration successful! Please verify your company.");
       }
       setStep("login");
     } catch (err) {
@@ -243,7 +354,7 @@ const LandingPage = () => {
     } catch (err) {
       if (err.response?.status === 403) {
         alert("Please verify your company before logging in.");
-        localStorage.setItem("user", JSON.stringify({ email }));
+        localStorage.setItem("userData", JSON.stringify({ email: email }));       
         setStep("verify");
         return;
       }
@@ -257,11 +368,17 @@ const LandingPage = () => {
     e.preventDefault();
     setIsLoading(true);
      
-    const user = JSON.parse(localStorage.getItem("userData"));
-    const email = user?.email;
+    let userData = JSON.parse(localStorage.getItem("userData"));
+    let email = userData?.email;
 
-    console.log("Logged-in user email:", email);
-    
+  
+  // If no email in localStorage, try to get it from the current form or session
+  if (!email) {
+    const formData = new FormData(e.target);
+    email = formData.get("email"); // In case there's an email field in verify form
+  }
+
+  console.log("Verification user email:", email);
     if (!email) {
       alert("No user email found. Please log in again.");
       setIsLoading(false);
@@ -297,9 +414,17 @@ const LandingPage = () => {
     setIsLoading(true);
 
     const formData = new FormData(e.target);
-    const email = formData.get("email");
-    const otp = formData.get("otp");
+     // ✅ Get email from localStorage as primary source, fallback to form
+  let userData = JSON.parse(localStorage.getItem("userData"));
+  let email = userData?.email || formData.get("email");
+  
+  const otp = formData.get("otp");
 
+  if (!email) {
+    alert("No email found. Please start the process again.");
+    setIsLoading(false);
+    return;
+  }
     try {
       const response = await axios.post("http://localhost:8080/api/verify-otp", { email, otp });
 
@@ -335,28 +460,8 @@ const LandingPage = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 text-gray-800">
-      {/* Glass Transparent Navbar */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-white/20 backdrop-blur-md border-b border-white/30 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-3">
-            <img src={logo} alt="Company Logo" className="h-10 w-10" />
-            <span className="text-xl font-bold text-gray-800">MediVerse</span>
-          </div>
-          <ul className="flex items-center space-x-4">
-            <li><a href="#home" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium">Home</a></li>
-            <li><a href="#about" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium">About Us</a></li>
-            <li><a href="#contact" className="text-gray-900 hover:text-indigo-700 transition-colors font-medium">Contact</a></li>
-            <li>
-              <button 
-                onClick={toggleModal}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg transition-all font-medium shadow-md hover:shadow-lg"
-              >
-                Login
-              </button>
-            </li>
-          </ul>
-        </div>
-      </nav>
+      {/* Use the Navbar component and pass toggleModal as prop */}
+      <Navbar toggleModal={toggleModal} />
 
       {/* Hero Section with Medical Background */}
       <section className="relative min-h-screen flex items-center justify-center pt-16 bg-cover bg-center bg-no-repeat"

@@ -245,7 +245,7 @@ const useMedicines = () => {
   };
 };
 
-const Inventory = () => {
+const WholesalerInventory = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [sortBy, setSortBy] = useState("name");
@@ -1048,6 +1048,7 @@ const Inventory = () => {
     const navItems = [
       { icon: LayoutDashboard, label: "Dashboard", id: "dashboard" },
       { icon: Package, label: "Inventory Management", id: "inventory" },
+      { icon: ShoppingCart, label: "Wholesaler Catalog", id: "catalog" },
       { icon: ClipboardList, label: "Order Management", id: "orders" },
       { icon: Truck, label: "Dispatch & Tracking", id: "dispatch" },
       { icon: FileText, label: "Reports & Compliance", id: "reports" },
@@ -1063,6 +1064,7 @@ const Inventory = () => {
       const path = location.pathname;
       if (path.includes('/inventory')) return 'inventory';
       if (path.includes('/orders')) return 'orders';
+      if (path.includes('/catalog')) return 'catalog';
       if (path.includes('/dispatch')) return 'dispatch';
       if (path.includes('/reports')) return 'reports';
       if (path.includes('/dashboard')) return 'dashboard';
@@ -1075,22 +1077,25 @@ const Inventory = () => {
       setIsMobileMenuOpen(false);
       switch(itemId) {
         case 'dashboard':
-          navigate('/manufacturer/dashboard');
+          navigate('/wholesaler/dashboard');
           break;
         case 'inventory':
-          navigate('/manufacturer/inventory');
+          navigate('/wholesaler/inventory');
+          break;
+        case 'catalog':
+          navigate('/wholesaler/catalog');
           break;
         case 'orders':
-          navigate('/manufacturer/orders');
+          navigate('/wholesaler/orders');
           break;
         case 'dispatch':
-          navigate('/manufacturer/dispatch');
+          navigate('/wholesaler/dispatch');
           break;
         case 'reports':
-          navigate('/manufacturer/reports');
+          navigate('/wholesaler/reports');
           break;
         default:
-          navigate('/manufacturer/dashboard');
+          navigate('/wholesaler/dashboard');
       }
     };
 
@@ -1182,6 +1187,7 @@ const Inventory = () => {
     const navItems = [
       { icon: LayoutDashboard, label: "Dashboard", id: "dashboard" },
       { icon: Package, label: "Inventory Management", id: "inventory" },
+      { icon: ShoppingCart, label: "Wholesaler Catalog", id: "catalog" },
       { icon: ClipboardList, label: "Order Management", id: "orders" },
       { icon: Truck, label: "Dispatch & Tracking", id: "dispatch" },
       { icon: FileText, label: "Reports & Compliance", id: "reports" },
@@ -1197,6 +1203,7 @@ const Inventory = () => {
       const path = location.pathname;
       if (path.includes('/inventory')) return 'inventory';
       if (path.includes('/orders')) return 'orders';
+      if (path.includes('/catalog')) return 'catalog';
       if (path.includes('/dispatch')) return 'dispatch';
       if (path.includes('/reports')) return 'reports';
       if (path.includes('/dashboard')) return 'dashboard';
@@ -1208,22 +1215,25 @@ const Inventory = () => {
     const handleNavigation = (itemId) => {
       switch(itemId) {
         case 'dashboard':
-          navigate('/manufacturer/dashboard');
+          navigate('/wholesaler/dashboard');
           break;
         case 'inventory':
-          navigate('/manufacturer/inventory');
+          navigate('/wholesaler/inventory');
+          break;
+        case 'catalog':
+          navigate('/wholesaler/catalog');
           break;
         case 'orders':
-          navigate('/manufacturer/orders');
+          navigate('/wholesaler/orders');
           break;
         case 'dispatch':
-          navigate('/manufacturer/dispatch');
+          navigate('/wholesaler/dispatch');
           break;
         case 'reports':
-          navigate('/manufacturer/reports');
+          navigate('/wholesaler/reports');
           break;
         default:
-          navigate('/manufacturer/dashboard');
+          navigate('/wholesaler/dashboard');
       }
     };
 
@@ -1927,10 +1937,10 @@ const Inventory = () => {
 };
 
 // Export the component wrapped with MobileMenuProvider
-const InventoryWithProvider = () => (
+const WholesalerInventoryWithProvider = () => (
   <MobileMenuProvider>
-    <Inventory />
+    <WholesalerInventory />
   </MobileMenuProvider>
 );
 
-export default InventoryWithProvider;
+export default WholesalerInventoryWithProvider;

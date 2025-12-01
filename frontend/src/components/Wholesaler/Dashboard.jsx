@@ -1,14 +1,9 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { LayoutDashboard, Bell, Package, Truck, FileText, Mail, Ship, Zap, ShoppingCart, LogOut, Search, DollarSign, Users, ClipboardList, AlertTriangle, Calendar, CheckCircle, Clock } from "lucide-react";
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../../assets/logo.png';
 import axios from 'axios';
 import { io } from "socket.io-client";
-
-// Add this near the top of your file
-const API_BASE_URL = "http://localhost:8080/api";
-
-const NotificationContext = React.createContext();
 
 // Simple cn utility function
 const cn = (...classes) => classes.filter(Boolean).join(' ');
@@ -33,25 +28,17 @@ const useMobileMenu = () => {
   }
   return context;
 };
+// Notification Context
+const NotificationContext = React.createContext();
 
-// ✅ MOVE useNotifications HOOK HERE - BEFORE NotificationProvider
-const useNotifications = () => {
-  const context = React.useContext(NotificationContext);
-  if (!context) {
-    throw new Error('useNotifications must be used within a NotificationProvider');
-  }
-  return context;
-};
-
+// Notification Provider
 const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [socket, setSocket] = useState(null);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const API_BASE_URL = "http://localhost:8080/api";
 
-  // Get user data function
-  const getUserData = useCallback(() => {
+  const getUserData = () => {
     try {
       let userData = localStorage.getItem('userData') || sessionStorage.getItem('userData');
       if (!userData) return null;
@@ -61,11 +48,12 @@ const NotificationProvider = ({ children }) => {
       console.error('❌ Error parsing user data:', error);
       return null;
     }
-  }, []);
+  };
 
   // Fetch notifications from backend
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = async () => {
     try {
+      setLoading(true);
       const userData = getUserData();
       if (!userData?.id) {
         console.error('❌ No user ID found for fetching notifications');
@@ -76,325 +64,105 @@ const NotificationProvider = ({ children }) => {
       if (response.data && response.data.success) {
         const notificationsWithDates = response.data.notifications.map(notification => ({
           ...notification,
-          timestamp: new Date(notification.created_at || notification.timestamp || Date.now()),
+          timestamp: new Date(notification.created_at || Date.now()),
           read: notification.is_read === 1
         }));
         
         setNotifications(notificationsWithDates);
-        const unread = notificationsWithDates.filter(n => !n.read).length;
-        setUnreadCount(unread);
+        setUnreadCount(response.data.pagination?.unreadCount || 0);
+        console.log('✅ Notifications loaded:', notificationsWithDates.length);
       }
     } catch (error) {
       console.error('❌ Error fetching notifications:', error);
+    } finally {
+      setLoading(false);
     }
-  }, [getUserData]);
+  };
 
-  // Define markAsRead FIRST
-  const markAsRead = useCallback((id) => {
-    setNotifications(prev =>
-      prev.map(notification =>
-        notification.id === id ? { ...notification, read: true } : notification
-      )
-    );
-    setUnreadCount(prev => Math.max(0, prev - 1));
-  }, []);
-const sendOrderNotification = useCallback(async (orderId, action, rejectionReason = '') => {
-  try {
-    console.log(`📧 Attempting to send ${action} email for order:`, orderId);
-    
-    const response = await axios.post(`${API_BASE_URL}/notifications/send`, {
-      order_id: orderId,
-      type: `order_${action}`,
-      rejection_reason: rejectionReason
-    });
-
-    if (response.data.success) {
-      console.log(`✅ ${action} email sent successfully to wholesaler`);
-    } else {
-      console.warn(`⚠️ Email service responded with non-success:`, response.data);
-    }
-  } catch (error) {
-    console.warn(`⚠️ Could not send ${action} email (this is okay for demo):`, error.message);
-    // Don't throw error - just log it and continue
-  }
-}, []);
-const handleOrderAction = useCallback(async (orderId, action, rejectionReason = '') => {
-  try {
-    if (!orderId) {
-      console.error('❌ Order ID is undefined');
-      return false;
-    }
-
-    console.log(`🔄 ${action}ing order:`, orderId);
-    
-    // ✅ TEST ALL POSSIBLE ENDPOINT FORMATS WITH BETTER DEBUGGING
-    const endpoints = [
-      `${API_BASE_URL}/orders/${orderId}/${action}`,
-      `${API_BASE_URL}/orders/${orderId}/update-status`,
-      `http://localhost:8080/api/orders/${orderId}/${action}`,
-      `http://localhost:8080/api/orders/${orderId}/update-status`,
-    ];
-
-    const requestData = action === 'accept' 
-      ? { status: 'approved' }
-      : { status: 'rejected', rejection_reason: rejectionReason };
-
-    console.log('📤 Request Data:', requestData);
-    console.log('🎯 Available endpoints to try:', endpoints);
-
-    let apiSuccess = false;
-    let lastError = null;
-    let lastResponse = null;
-
-    // Try each endpoint until one works
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`📡 Attempting: POST ${endpoint}`);
-        console.log('📦 Sending data:', requestData);
-        
-        const response = await axios.post(endpoint, requestData, {
-          timeout: 3000,
-          headers: {
-            'Content-Type': 'application/json',
-          }
-        });
-        
-        console.log(`✅ SUCCESS! Response from ${endpoint}:`, response.data);
-        lastResponse = response.data;
-        
-        if (response.data && response.data.success) {
-          apiSuccess = true;
-          console.log(`🎉 API call successful! Order ${orderId} ${action}ed`);
-          break;
-        }
-      } catch (error) {
-        console.log(`❌ Failed: ${endpoint}`);
-        console.log('   Status:', error.response?.status);
-        console.log('   Response data:', error.response?.data);
-        console.log('   Error message:', error.message);
-        lastError = error;
-        continue;
-      }
-    }
-
-    // Update UI regardless of API success
-    console.log(`🎯 Updating UI for order ${orderId} as ${action}ed`);
-    
-    setNotifications(prev =>
-      prev.map(notification => {
-        const notificationOrderId = notification.orderId || notification.orderData?.order_id || notification.orderData?.orderId;
-        
-        if (notificationOrderId == orderId) {
-          return { 
-            ...notification, 
-            read: true,
-            status: action === 'accept' ? 'approved' : 'rejected',
-            action_timestamp: new Date()
-          };
-        }
-        return notification;
-      })
-    );
-   // Emit socket event to wholesaler - FIXED TO MATCH WHOLESALER EXPECTATIONS
-    if (socket) {
-      console.log(`📢 Emitting orderUpdate to wholesaler for order ${orderId}`);
+  const markAsRead = async (notificationId) => {
+    try {
+      const response = await axios.patch(`${API_BASE_URL}/notifications/${notificationId}/read`);
       
-      // Emit the main order update event
-      socket.emit('orderUpdate', {
-        orderId: orderId,
-        status: action === 'accept' ? 'approved' : 'rejected',
-        action: action,
-        rejectionReason: rejectionReason,
-        timestamp: new Date(),
-        manufacturerId: getUserData()?.id
-      });
-
-      // Also emit orderStatusUpdate for broader listeners
-      socket.emit('orderStatusUpdate', {
-        orderId: orderId,
-        status: action === 'accept' ? 'approved' : 'rejected',
-        message: action === 'accept' 
-          ? 'Your order has been approved by the manufacturer' 
-          : `Order rejected: ${rejectionReason || 'No reason provided'}`,
-        timestamp: new Date().toISOString()
-      });
-
-      console.log('✅ Socket events emitted successfully');
-    } else {
-      console.warn('❌ Socket not available for real-time updates');
-    }
-
-    // Try to send notification (non-blocking)
-    if (apiSuccess) {
-      try {
-        await sendOrderNotification(orderId, action, rejectionReason);
-      } catch (emailError) {
-        console.warn('⚠️ Could not send email notification:', emailError);
+      if (response.data.success) {
+        setNotifications(prev =>
+          prev.map(notification =>
+            notification.id === notificationId ? { ...notification, read: true, is_read: 1 } : notification
+          )
+        );
+        setUnreadCount(prev => Math.max(0, prev - 1));
       }
+    } catch (error) {
+      console.error('❌ Error marking notification as read:', error);
     }
+  };
 
-    if (action === 'accept') {
-      window.dispatchEvent(new Event('inventoryUpdated'));
+  const markAllAsRead = async () => {
+    try {
+      const userData = getUserData();
+      if (!userData?.id) return;
+
+      const response = await axios.patch(`${API_BASE_URL}/notifications/${userData.id}/read-all`);
+      
+      if (response.data.success) {
+        setNotifications(prev =>
+          prev.map(notification => ({ ...notification, read: true, is_read: 1 }))
+        );
+        setUnreadCount(0);
+      }
+    } catch (error) {
+      console.error('❌ Error marking all notifications as read:', error);
     }
-    
-    setShowOrderModal(false);
-    setSelectedOrder(null);
+  };
 
-    if (apiSuccess) {
-      console.log(`✅ Order ${orderId} ${action}ed successfully via API`);
-      // Show success message to user
-    } else {
-      console.warn(`⚠️ Order ${orderId} ${action}ed locally (API unavailable)`);
-      console.log('Last API error details:', {
-        status: lastError?.response?.status,
-        data: lastError?.response?.data,
-        message: lastError?.message
-      });
-      // Show warning that action was saved locally
+  const clearNotification = async (notificationId) => {
+    try {
+      const notification = notifications.find(n => n.id === notificationId);
+      if (notification && !notification.read) {
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+      setNotifications(prev => prev.filter(n => n.id !== notificationId));
+      
+      console.log('Cleared notification:', notificationId);
+    } catch (error) {
+      console.error('❌ Error clearing notification:', error);
     }
-    
-    return true;
+  };
 
-  } catch (error) {
-    console.error(`❌ Unexpected error ${action}ing order:`, error);
-    
-    // Even on unexpected errors, update UI to prevent stuck state
-    setNotifications(prev =>
-      prev.map(notification => {
-        const notificationOrderId = notification.orderId || notification.orderData?.order_id || notification.orderData?.orderId;
-        
-        if (notificationOrderId == orderId) {
-          return { 
-            ...notification, 
-            read: true,
-            status: action === 'accept' ? 'approved' : 'rejected'
-          };
-        }
-        return notification;
-      })
-    );
-    
-    setShowOrderModal(false);
-    setSelectedOrder(null);
-    
-    return true;
-  }
-}, [sendOrderNotification, socket, getUserData]);
-const openOrderModal = useCallback((notification) => {
-    console.log('📦 Opening modal with notification:', notification);
-    const orderData = notification.orderData || notification;
-    console.log('📋 Extracted order data:', orderData);
-    setSelectedOrder(orderData);
-    setShowOrderModal(true);
-    // Mark as read if it has an ID
-    if (notification.id) {
-      markAsRead(notification.id);
+  // Fetch unread count separately
+  const fetchUnreadCount = async () => {
+    try {
+      const userData = getUserData();
+      if (!userData?.id) return;
+
+      const response = await axios.get(`${API_BASE_URL}/notifications/${userData.id}/unread-count`);
+      if (response.data.success) {
+        setUnreadCount(response.data.unreadCount);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching unread count:', error);
     }
-  }, [markAsRead]);
+  };
 
-  const markAllAsRead = useCallback(() => {
-    setNotifications(prev =>
-      prev.map(notification => ({ ...notification, read: true }))
-    );
-    setUnreadCount(0);
-  }, []);
-
-  const clearNotification = useCallback((id) => {
-    const notification = notifications.find(n => n.id === id);
-    if (notification && !notification.read) {
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    }
-    setNotifications(prev => prev.filter(n => n.id !== id));
-  }, [notifications]);
-
-  // Socket.io useEffect
+  // Set up real-time notifications using polling
   useEffect(() => {
-    const newSocket = io("http://localhost:8080", {
-      transports: ['websocket', 'polling']
-    });
-    
-    setSocket(newSocket);
+    const userData = getUserData();
+    if (!userData?.id) return;
 
-    const getUserDataInsideEffect = () => {
-      try {
-        let userData = localStorage.getItem('userData') || sessionStorage.getItem('userData');
-        if (!userData) return null;
-        return JSON.parse(userData);
-      } catch (error) {
-        console.error('❌ Error parsing user data:', error);
-        return null;
-      }
-    };
+    // Fetch notifications initially
+    fetchNotifications();
 
-    const fetchNotificationsInsideEffect = async () => {
-      try {
-        const userData = getUserDataInsideEffect();
-        if (!userData?.id) return;
+    // Set up polling for real-time updates (every 30 seconds)
+    const pollInterval = setInterval(() => {
+      fetchUnreadCount();
+    }, 30000);
 
-        const response = await axios.get(`${API_BASE_URL}/notifications/${userData.id}`);
-        if (response.data?.success) {
-          const notificationsWithDates = response.data.notifications.map(notification => ({
-            ...notification,
-            timestamp: new Date(notification.created_at || Date.now()),
-            read: notification.is_read === 1
-          }));
-          
-          setNotifications(notificationsWithDates);
-          const unread = notificationsWithDates.filter(n => !n.read).length;
-          setUnreadCount(unread);
-        }
-      } catch (error) {
-        console.error('❌ Error fetching notifications:', error);
-      }
-    };
-
-    newSocket.on('connect', () => {
-      console.log('✅ Connected to server');
-      
-      const userData = getUserDataInsideEffect();
-      if (userData?.id) {
-        newSocket.emit('join-manufacturer', userData.id);
-        console.log(`🏭 Joined manufacturer room: ${userData.id}`);
-        fetchNotificationsInsideEffect();
-      }
-    });
-
-    newSocket.on("newOrder", async (data) => {
-      console.log("🔥 New order received via Socket.io!", data);
-      
-      const newNotification = {
-        id: Date.now().toString(),
-        type: 'new_order',
-        title: 'New Order Received!',
-        message: `New order from ${data.wholesaler_name || 'Wholesaler'} for ${data.product_name || 'product'}`,
-        timestamp: new Date(),
-        read: false,
-        orderData: data,
-        orderId: data.order_id
-      };
-
-      setNotifications(prev => [newNotification, ...prev]);
-      setUnreadCount(prev => prev + 1);
-      
-      setTimeout(() => {
-        fetchNotificationsInsideEffect();
-      }, 1500);
-      
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification("New Order Received!", {
-          body: `New order from ${data.wholesaler_name || 'Wholesaler'} for ${data.product_name}`,
-          icon: logo
-        });
-      }
-    });
-
+    // Request notification permission
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
 
     return () => {
-      console.log('🔌 Disconnecting socket...');
-      newSocket.disconnect();
+      clearInterval(pollInterval);
     };
   }, []);
 
@@ -402,191 +170,188 @@ const openOrderModal = useCallback((notification) => {
     <NotificationContext.Provider value={{
       notifications,
       unreadCount,
+      loading,
       markAsRead,
       markAllAsRead,
       clearNotification,
-      socket,
-      openOrderModal,
-      handleOrderAction,
-      selectedOrder,
-      showOrderModal,
-      setShowOrderModal,
-      fetchNotifications
+      fetchNotifications,
+      fetchUnreadCount
     }}>
       {children}
     </NotificationContext.Provider>
   );
 };
-// Update NotificationDialog to handle both notification and order data
-const NotificationDialog = ({ notification, onClose, onAccept, onReject }) => {
-  const [rejectionReason, setRejectionReason] = useState('');
-  
-  if (!notification) return null;
 
-  // Handle both notification object and direct order data
-  const orderData = notification.orderData || notification;
-  const orderId = orderData.order_id || orderData.orderId || notification.id;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-700">
-          <h3 className="text-xl font-bold text-white">Order Approval Required</h3>
-          <p className="text-gray-400 text-sm mt-1">
-            Review and take action on this order
-          </p>
-        </div>
-        
-        <div className="p-6 space-y-4">
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-            <div className="flex items-center gap-2 text-blue-400">
-              <Bell className="w-5 h-5" />
-              <span className="font-semibold">New Order Request</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-gray-400">Order ID:</span>
-              <p className="text-white font-mono">{orderId || 'N/A'}</p>
-            </div>
-            <div>
-              <span className="text-gray-400">Product:</span>
-              <p className="text-white">{orderData.product_name || 'Cough Syrup'}</p>
-            </div>
-            <div>
-              <span className="text-gray-400">Quantity:</span>
-              <p className="text-white">{orderData.quantity || 1} units</p>
-            </div>
-            <div>
-              <span className="text-gray-400">Total Amount:</span>
-              <p className="text-green-400 font-bold">${orderData.total_amount || 94.4}</p>
-            </div>
-          </div>
-
-          {/* Rejection Reason Input */}
-          <div className="mt-4">
-            <label className="block text-gray-400 text-sm mb-2">
-              Rejection Reason (if rejecting):
-            </label>
-            <textarea
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.target.value)}
-              placeholder="Optional: Provide reason for rejection..."
-              className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-              rows="3"
-            />
-          </div>
-        </div>
-        
-        <div className="p-6 border-t border-gray-700">
-          <div className="mb-4">
-            <h4 className="text-white font-semibold mb-3">Choose Action:</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => onReject(orderId, rejectionReason)}
-                className="bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Reject Order
-              </button>
-              <button
-                onClick={() => onAccept(orderId)}
-                className="bg-green-600 hover:bg-green-700 text-white py-3 px-4 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Accept Order
-              </button>
-            </div>
-          </div>
-          
-          <div className="text-xs text-gray-400 space-y-1">
-            <p>• Accepting will generate and send invoice to wholesaler</p>
-            <p>• Rejecting will notify wholesaler with reason</p>
-            <p>• Both actions will update order status accordingly</p>
-          </div>
-        </div>
-        
-        <div className="p-4 border-t border-gray-700 flex justify-end">
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white px-4 py-2 transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+const useNotifications = () => {
+  const context = React.useContext(NotificationContext);
+  if (!context) {
+    throw new Error('useNotifications must be used within a NotificationProvider');
+  }
+  return context;
 };
-// Fix the NotificationBellWithModal component
+// Notification Bell Component
 const NotificationBellWithModal = () => {
   const { 
     notifications, 
     unreadCount, 
+    loading,
     markAsRead, 
     markAllAsRead, 
     clearNotification,
-    openOrderModal,
-    handleOrderAction,
-    selectedOrder,
-    showOrderModal,
-    setShowOrderModal
+    fetchNotifications
   } = useNotifications();
   
   const [isOpen, setIsOpen] = useState(false);
-const handleNotificationClick = (notification) => {
-  console.log('📦 Notification clicked:', notification);
-  
-  // Check for both 'new_order' AND 'order_request' types
-  if (notification.type === 'new_order' || notification.type === 'order_request') {
-    console.log('🚀 Calling openOrderModal...');
-    // Use the existing openOrderModal function
-    openOrderModal(notification);
-    markAsRead(notification.id);
-  } else {
-    markAsRead(notification.id);
-  }
-  setIsOpen(false);
-};
-  const handleAcceptOrder = async (orderId) => {
-    console.log('✅ Accepting order:', orderId);
-    const success = await handleOrderAction(orderId, 'accept');
-    if (success) {
-      setShowOrderModal(false);
-    }
-  };
+  const navigate = useNavigate();
 
-  const handleRejectOrder = async (orderId, rejectionReason) => {
-    console.log('❌ Rejecting order:', orderId);
-    const success = await handleOrderAction(orderId, 'reject', rejectionReason);
-    if (success) {
-      setShowOrderModal(false);
-    }
-  };
-
-  // Debug: Log notifications to see what's available
+  // Add this useEffect to refresh notifications when order status updates
   useEffect(() => {
-    console.log('🔔 Current notifications:', notifications);
-    console.log('📋 Show Order Modal:', showOrderModal);
-    console.log('📦 Selected Order:', selectedOrder);
-  }, [notifications, showOrderModal, selectedOrder]);
+    const handleOrderStatusUpdate = () => {
+      console.log('🔄 Order status updated, refreshing notifications...');
+      fetchNotifications();
+    };
+
+    window.addEventListener('orderStatusUpdated', handleOrderStatusUpdate);
+    
+    return () => {
+      window.removeEventListener('orderStatusUpdated', handleOrderStatusUpdate);
+    };
+  }, [fetchNotifications]);
+
+  // 🆕 ADD THIS NEW USEEFFECT FOR REFRESH EVENTS
+  useEffect(() => {
+    const handleRefreshNotifications = () => {
+      console.log('🔄 Refreshing notifications due to real-time update...');
+      fetchNotifications();
+    };
+
+    window.addEventListener('refreshNotifications', handleRefreshNotifications);
+    
+    return () => {
+      window.removeEventListener('refreshNotifications', handleRefreshNotifications);
+    };
+  }, [fetchNotifications]); // ✅ Make sure fetchNotifications is in dependencies
+
+  const handleNotificationClick = (notification) => {
+    markAsRead(notification.id);
+    
+    // Handle different notification types based on your schema
+    switch(notification.type) {
+      case 'order_approved':
+        // Navigate to orders page
+        navigate('/wholesaler/orders');
+        break;
+      case 'order_rejected':
+        // Navigate to orders page
+        navigate('/wholesaler/orders');
+        break;
+      case 'order_request':
+        // For wholesaler, this might be order status updates
+        navigate('/wholesaler/orders');
+        break;
+      case 'invoice_sent':
+        // Navigate to invoices or orders page
+        navigate('/wholesaler/orders');
+        break;
+      default:
+        console.log('Notification type:', notification.type);
+    }
+    
+    setIsOpen(false);
+  };
+
+  const getNotificationIcon = (type) => {
+    switch(type) {
+      case 'order_approved':
+        return <CheckCircle className="w-4 h-4 text-green-400" />;
+      case 'order_rejected':
+        return <AlertTriangle className="w-4 h-4 text-red-400" />;
+      case 'order_request':
+        return <ShoppingCart className="w-4 h-4 text-blue-400" />;
+      case 'invoice_sent':
+        return <FileText className="w-4 h-4 text-purple-400" />;
+      default:
+        return <Bell className="w-4 h-4 text-gray-400" />;
+    }
+  };
+
+  const getNotificationColor = (type) => {
+    switch(type) {
+      case 'order_approved':
+        return 'border-l-green-500';
+      case 'order_rejected':
+        return 'border-l-red-500';
+      case 'order_request':
+        return 'border-l-blue-500';
+      case 'invoice_sent':
+        return 'border-l-purple-500';
+      default:
+        return 'border-l-gray-500';
+    }
+  };
+
+  const getNotificationTitle = (type) => {
+    switch(type) {
+      case 'order_approved':
+        return 'Order Approved';
+      case 'order_rejected':
+        return 'Order Rejected';
+      case 'order_request':
+        return 'Order Update';
+      case 'invoice_sent':
+        return 'Invoice Sent';
+      default:
+        return 'Notification';
+    }
+  };
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return 'Recently';
+    
+    const now = new Date();
+    const diffInMs = now - new Date(timestamp);
+    const diffInMinutes = Math.floor(diffInMs / (1000 * 60));
+    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+    
+    if (diffInMinutes < 1) return 'Just now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInHours < 24) return `${diffInHours}h ago`;
+    if (diffInDays < 7) return `${diffInDays}d ago`;
+    
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  const getActionText = (type) => {
+    switch(type) {
+      case 'order_approved':
+      case 'order_rejected':
+      case 'order_request':
+        return 'View Orders';
+      case 'invoice_sent':
+        return 'View Invoice';
+      default:
+        return 'View Details';
+    }
+  };
 
   return (
     <div className="relative">
       <button 
         onClick={() => setIsOpen(!isOpen)}
         className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all duration-200 relative"
+        disabled={loading}
       >
         <Bell className="w-4 h-4 lg:w-5 lg:h-5" />
         {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 w-4 h-4 lg:w-5 lg:h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
+        )}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
         )}
       </button>
 
@@ -596,102 +361,114 @@ const handleNotificationClick = (notification) => {
           <div className="p-4 border-b border-gray-700">
             <div className="flex items-center justify-between">
               <h3 className="text-white font-semibold">Notifications</h3>
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllAsRead}
-                  className="text-purple-400 hover:text-purple-300 text-sm"
-                >
-                  Mark all as read
-                </button>
-              )}
-            </div>
-          </div>
-
-<div className="max-h-96 overflow-y-auto">
-  {notifications.length === 0 ? (
-    <div className="p-4 text-center text-gray-400">
-      No notifications
-    </div>
-  ) : (
-    notifications.map((notification) => (
-      <div
-        key={notification.id}
-        className={cn(
-          "p-4 border-b border-gray-700 hover:bg-gray-750 cursor-pointer transition-colors",
-          !notification.read && "bg-blue-500/10"
-        )}
-        onClick={() => handleNotificationClick(notification)}
-      >
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <div className={cn(
-                "w-2 h-2 rounded-full",
-                !notification.read ? "bg-blue-500" : 
-                notification.status === 'accepted' ? "bg-green-500" :
-                notification.status === 'rejected' ? "bg-red-500" : "bg-gray-500"
-              )} />
-              <span className="text-white font-medium text-sm">
-                {notification.title || 'New Order Request'}
-              </span>
-            </div>
-            <p className="text-gray-300 text-sm mb-2">
-              {notification.message}
-            </p>
-            <div className="flex items-center justify-between">
-              <span className="text-gray-400 text-xs">
-                {notification.timestamp ? notification.timestamp.toLocaleTimeString() : 'Recent'}
-              </span>
               <div className="flex items-center gap-2">
-                {/* Show status badge if action was taken */}
-{notification.status === 'approved' && (
-  <span className="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded">
-    Approved
-  </span>
-)}
-{notification.status === 'rejected' && (
-  <span className="bg-red-500/20 text-red-400 text-xs px-2 py-1 rounded">
-    Rejected
-  </span>
-)}
-                {(notification.type === 'new_order' || notification.type === 'order_request') && !notification.status && (
-                  <span className="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded">
-                    Click to Review
-                  </span>
+                {unreadCount > 0 && (
+                  <button
+                    onClick={markAllAsRead}
+                    className="text-purple-400 hover:text-purple-300 text-sm"
+                  >
+                    Mark all read
+                  </button>
                 )}
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="text-gray-400 hover:text-white ml-2"
+                >
+                  ×
+                </button>
               </div>
             </div>
           </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              clearNotification(notification.id);
-            }}
-            className="text-gray-400 hover:text-red-400 ml-2"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-    ))
-  )}
-</div>
-        </div>
-      )}
 
-      {/* Order Approval Modal - Use the existing showOrderModal state */}
-      {showOrderModal && selectedOrder && (
-        <NotificationDialog
-          notification={selectedOrder}
-          onClose={() => setShowOrderModal(false)}
-          onAccept={handleAcceptOrder}
-          onReject={handleRejectOrder}
-        />
+          <div className="max-h-96 overflow-y-auto">
+            {loading ? (
+              <div className="p-8 text-center">
+                <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                <p className="text-gray-400 text-sm">Loading notifications...</p>
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="p-8 text-center">
+                <Bell className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                <p className="text-gray-400 text-sm">No notifications</p>
+                <p className="text-gray-500 text-xs mt-1">You're all caught up!</p>
+              </div>
+            ) : (
+              notifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className={cn(
+                    "border-l-4 p-4 border-b border-gray-700 hover:bg-gray-750 cursor-pointer transition-colors",
+                    getNotificationColor(notification.type),
+                    !notification.read && "bg-blue-500/5"
+                  )}
+                  onClick={() => handleNotificationClick(notification)}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 mt-0.5">
+                      {getNotificationIcon(notification.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between mb-1">
+                        <span className="text-white font-medium text-sm">
+                          {notification.title || getNotificationTitle(notification.type)}
+                        </span>
+                        {!notification.read && (
+                          <div className="w-2 h-2 bg-blue-500 rounded-full ml-2 flex-shrink-0"></div>
+                        )}
+                      </div>
+                      <p className="text-gray-300 text-sm mb-2">
+                        {notification.message}
+                      </p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-xs">
+                          {formatTime(notification.timestamp)}
+                        </span>
+                        <span className="text-purple-400 text-xs font-medium">
+                          {getActionText(notification.type)}
+                        </span>
+                      </div>
+                      {notification.related_order_id && (
+                        <div className="mt-2">
+                          <span className="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded">
+                            Order #{notification.related_order_id}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearNotification(notification.id);
+                      }}
+                      className="text-gray-400 hover:text-red-400 ml-2 flex-shrink-0 p-1 rounded hover:bg-gray-700"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {notifications.length > 0 && (
+            <div className="p-3 border-t border-gray-700 bg-gray-750">
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span>{unreadCount} unread of {notifications.length} total</span>
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="text-purple-400 hover:text-purple-300"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
 };
-// Medicines Management Hook for Dashboard
+// Medicines Management Hook
 const useMedicines = () => {
   const [medicines, setMedicines] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -760,6 +537,7 @@ const useMedicines = () => {
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", id: "dashboard" },
   { icon: Package, label: "Inventory Management", id: "inventory" },
+  { icon: ShoppingCart, label: "Wholesaler Catalog", id: "catalog" },
   { icon: ClipboardList, label: "Order Management", id: "orders" },
   { icon: Truck, label: "Dispatch & Tracking", id: "dispatch" },
   { icon: FileText, label: "Reports & Compliance", id: "reports" },
@@ -780,6 +558,7 @@ const Sidebar = () => {
     const path = location.pathname;
     if (path.includes('/inventory')) return 'inventory';
     if (path.includes('/orders')) return 'orders';
+    if (path.includes('/catalog')) return 'catalog';
     if (path.includes('/dispatch')) return 'dispatch';
     if (path.includes('/reports')) return 'reports';
     if (path.includes('/dashboard')) return 'dashboard';
@@ -792,22 +571,25 @@ const Sidebar = () => {
     setIsMobileMenuOpen(false);
     switch(itemId) {
       case 'dashboard':
-        navigate('/manufacturer/dashboard');
+        navigate('/wholesaler/dashboard');
         break;
       case 'inventory':
-        navigate('/manufacturer/inventory');
+        navigate('/wholesaler/inventory');
+        break;
+      case 'catalog':
+        navigate('/wholesaler/catalog');
         break;
       case 'orders':
-        navigate('/manufacturer/orders');
+        navigate('/wholesaler/orders');
         break;
       case 'dispatch':
-        navigate('/manufacturer/dispatch');
+        navigate('/wholesaler/dispatch');
         break;
       case 'reports':
-        navigate('/manufacturer/reports');
+        navigate('/wholesaler/reports');
         break;
       default:
-        navigate('/manufacturer/dashboard');
+        navigate('/wholesaler/dashboard');
     }
   };
 
@@ -849,7 +631,7 @@ const Sidebar = () => {
               className="w-full h-full object-contain"
             />
           </div>
-          <span className="text-xl font-semibold text-white">Manufacturer</span>
+          <span className="text-xl font-semibold text-white">Wholesaler</span>
         </div>
         {mobile && (
           <button 
@@ -926,7 +708,7 @@ const Sidebar = () => {
   );
 };
 
-// Monthly Revenue Chart Component
+// Area Chart Component for Monthly Revenue
 const MonthlyRevenueChart = () => {
   const revenueData = [
     { month: "Jan", revenue: 125000 },
@@ -946,9 +728,12 @@ const MonthlyRevenueChart = () => {
   const maxRevenue = Math.max(...revenueData.map(item => item.revenue));
   const minRevenue = Math.min(...revenueData.map(item => item.revenue));
 
+  // Generate area chart path - FIXED to use full width
   const getAreaPath = () => {
     const points = revenueData.map((item, index) => {
+      // Distribute points evenly across the full width (0% to 100%)
       const x = (index / (revenueData.length - 1)) * 100;
+      // Calculate Y position (inverted since SVG Y=0 is top)
       const y = 100 - ((item.revenue - minRevenue) / (maxRevenue - minRevenue)) * 80;
       return { x, y };
     });
@@ -961,11 +746,13 @@ const MonthlyRevenueChart = () => {
       path += ` L ${points[i].x},${points[i].y}`;
     }
     
+    // Close the path for area fill - go to bottom right, then bottom left, then back to start
     path += ` L 100,100 L 0,100 Z`;
     
     return path;
   };
 
+  // Generate line path - FIXED to use full width
   const getLinePath = () => {
     const points = revenueData.map((item, index) => {
       const x = (index / (revenueData.length - 1)) * 100;
@@ -985,15 +772,19 @@ const MonthlyRevenueChart = () => {
   };
 
   return (
-    <div className="h-full relative">
+    <div className="h-32 lg:h-48 relative">
       <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
+        {/* Area fill */}
         <path d={getAreaPath()} fill="url(#areaGradient)" />
+        
+        {/* Line */}
         <path 
           d={getLinePath()} 
           fill="none" 
           stroke="url(#lineGradient)" 
           strokeWidth="1.5" 
         />
+        
         <defs>
           <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
             <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.3" />
@@ -1006,13 +797,10 @@ const MonthlyRevenueChart = () => {
         </defs>
       </svg>
       
-      {/* Simplified month labels for mobile */}
+      {/* Month labels - simplified for mobile */}
       <div className="absolute bottom-0 left-0 right-0 flex justify-between px-1">
         {revenueData.filter((_, index) => index % 3 === 0).map((item, index) => (
-          <span 
-            key={index} 
-            className="text-gray-400 text-[10px] lg:text-xs"
-          >
+          <span key={index} className="text-gray-400 text-[10px] lg:text-xs">
             {item.month}
           </span>
         ))}
@@ -1040,21 +828,24 @@ const StockTurnoverChart = () => {
 
   return (
     <div className="flex flex-col items-center">
-      <div className="relative w-32 h-16 mb-4">
+      {/* Semi-circle chart */}
+      <div className="relative w-24 lg:w-32 h-12 lg:h-16 mb-3 lg:mb-4">
         <svg viewBox="0 0 100 50" className="w-full h-full">
+          {/* Background arc */}
           <path
             d="M 10,50 A 40,40 0 0 1 90,50"
             fill="none"
             stroke="#374151"
             strokeWidth="8"
           />
+          {/* Progress arc */}
           <path
             d="M 10,50 A 40,40 0 0 1 90,50"
             fill="none"
             stroke="url(#progressGradient)"
             strokeWidth="8"
             strokeDasharray="125.6"
-            strokeDashoffset={125.6 - (125.6 * 0.82)}
+            strokeDashoffset={125.6 - (125.6 * 0.82)} // 82% progress
           />
           <defs>
             <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -1065,23 +856,24 @@ const StockTurnoverChart = () => {
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center">
-            <div className="text-white font-bold text-lg">5.2x</div>
-            <div className="text-gray-400 text-xs">Turnover</div>
+            <div className="text-white font-bold text-base lg:text-lg">5.2x</div>
+            <div className="text-gray-400 text-[10px] lg:text-xs">Turnover</div>
           </div>
         </div>
       </div>
 
-      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-xs">
+      {/* Month labels in 3 rows */}
+      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-[10px] lg:text-xs">
         {stockData.slice(0, 4).map((item, index) => (
           <div key={index} className="text-center">{item.month}</div>
         ))}
       </div>
-      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-xs mt-1">
+      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-[10px] lg:text-xs mt-1">
         {stockData.slice(4, 8).map((item, index) => (
           <div key={index} className="text-center">{item.month}</div>
         ))}
       </div>
-      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-xs mt-1">
+      <div className="w-full grid grid-cols-4 gap-1 text-gray-400 text-[10px] lg:text-xs mt-1">
         {stockData.slice(8).map((item, index) => (
           <div key={index} className="text-center">{item.month}</div>
         ))}
@@ -1216,7 +1008,7 @@ const DashboardContent = () => {
             </button>
             
             <div>
-              <h1 className="text-xl lg:text-2xl font-bold text-white">Manufacturer</h1>
+              <h1 className="text-xl lg:text-2xl font-bold text-white">Wholesaler Dashboard</h1>
               <div className="mt-1 lg:mt-2 text-xs lg:text-sm text-gray-300">
                 <span>Logged in as: </span>
                 <span className="font-semibold text-blue-300">
@@ -1244,7 +1036,6 @@ const DashboardContent = () => {
               />
             </div>
             
-            {/* Notification Bell */}
             <NotificationBellWithModal />
             
             <div className="w-6 h-6 lg:w-8 lg:h-8 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
@@ -1268,7 +1059,7 @@ const DashboardContent = () => {
 
       {/* Main Content */}
       <div className="p-4 lg:p-6">
-        {/* Stats Grid */}
+        {/* Stats Grid - Responsive for mobile */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 lg:gap-6 mb-6">
           {/* Total Revenue Card */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 lg:p-6 backdrop-blur-sm">
@@ -1292,14 +1083,14 @@ const DashboardContent = () => {
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
                   <Package className="w-4 h-4 lg:w-5 lg:h-5 text-purple-400" />
                 </div>
-                <h3 className="text-white text-sm lg:text-base font-medium">Total Products</h3>
+                <h3 className="text-white text-sm lg:text-base font-medium">Total Medicines</h3>
               </div>
               <span className="bg-purple-500/10 text-purple-400 text-xs font-medium px-2 py-1 rounded">
                 {dashboardData.medicinesCount > 0 ? 'Active' : 'None'}
               </span>
             </div>
             <div className="text-xl lg:text-2xl font-bold text-white mb-1">
-              {loading ? "Loading..." : dashboardData.medicinesCount.toLocaleString()}
+              {loading ? "Loading..." : dashboardData.medicinesCount}
             </div>
             <p className="text-gray-400 text-xs lg:text-sm">
               {dashboardData.medicinesCount === 1 ? 'Medicine in inventory' : 'Medicines in inventory'}
@@ -1328,7 +1119,7 @@ const DashboardContent = () => {
                 <div className="w-8 h-8 lg:w-10 lg:h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
                   <AlertTriangle className="w-4 h-4 lg:w-5 lg:h-5 text-red-400" />
                 </div>
-                <h3 className="text-white text-sm lg:text-base font-medium">Low Stock</h3>
+                <h3 className="text-white text-sm lg:text-base font-medium">Low Stock Alert</h3>
               </div>
               <span className="bg-red-500/10 text-red-400 text-xs font-medium px-2 py-1 rounded">
                 {dashboardData.medicinesCount > 0 
@@ -1342,48 +1133,37 @@ const DashboardContent = () => {
           </div>
         </div>
 
-        {/* Charts Grid */}
+        {/* Charts Grid - Responsive for mobile */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
           {/* Order Fulfillment Rate */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 lg:p-6 backdrop-blur-sm">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
-              <h3 className="text-base lg:text-lg font-semibold text-white">Order Fulfillment</h3>
+              <h3 className="text-base lg:text-lg font-semibold text-white">Order Fulfillment Rate</h3>
               <div className="flex items-center gap-2 text-gray-400 text-xs lg:text-sm">
                 <Calendar className="w-3 h-3 lg:w-4 lg:h-4" />
                 <span>Dec 2024</span>
               </div>
             </div>
-            
-            {/* Total Orders Summary */}
-            <div className="mb-4 p-3 bg-gray-700/50 rounded-lg">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-300 text-sm">Total Orders</span>
-                <span className="text-white font-semibold">1.4K</span>
-              </div>
-            </div>
-            
-            <div className="space-y-4 lg:space-y-5">
+            <div className="space-y-3 lg:space-y-4">
               {orderFulfillmentData.map((item, index) => {
                 const statusInfo = getStatusInfo(item.status);
                 return (
                   <div key={index} className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1">
-                        <div style={{ color: statusInfo.color }} className="flex-shrink-0">
+                      <div className="flex items-center gap-2">
+                        <div style={{ color: statusInfo.color }}>
                           {statusInfo.icon}
                         </div>
-                        <span className="text-white text-sm lg:text-base font-medium">{item.status}</span>
+                        <span className="text-white text-sm font-medium">{item.status}</span>
                       </div>
-                      <span className="text-white font-semibold text-base lg:text-lg ml-2 flex-shrink-0">
-                        {item.percentage}%
-                      </span>
+                      <span className="text-white font-semibold text-sm lg:text-base">{item.percentage}%</span>
                     </div>
-                    <div className="text-xs lg:text-sm text-gray-400">
+                    <div className="text-xs text-gray-400">
                       {formatCompactNumber(item.orders)} orders
                     </div>
-                    <div className="w-full bg-gray-700 rounded-full h-2 lg:h-2.5">
+                    <div className="w-full bg-gray-700 rounded-full h-2">
                       <div 
-                        className="h-full rounded-full transition-all duration-300"
+                        className="h-2 rounded-full transition-all duration-300"
                         style={{ 
                           width: `${item.percentage}%`,
                           backgroundColor: statusInfo.color
@@ -1396,14 +1176,14 @@ const DashboardContent = () => {
             </div>
           </div>
 
-          {/* Monthly Revenue */}
+          {/* Monthly Revenue - Updated for mobile */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 lg:p-6 backdrop-blur-sm">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
               <div className="flex-1">
                 <h3 className="text-base lg:text-lg font-semibold text-white">Monthly Revenue</h3>
                 <p className="text-gray-400 text-xs lg:text-sm mt-1">December 2024 Performance</p>
               </div>
-              <div className="flex items-center gap-2 bg-green-500/10 text-green-400 text-xs lg:text-sm font-medium px-3 py-1 rounded-full">
+              <div className="flex items-center gap-2 bg-green-500/10 text-green-400 text-xs lg:text-sm font-medium px-2 lg:px-3 py-1 rounded-full">
                 <svg className="w-3 h-3 lg:w-4 lg:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
@@ -1412,12 +1192,12 @@ const DashboardContent = () => {
             </div>
             
             {/* Chart Container */}
-            <div className="h-40 lg:h-48 mb-4">
+            <div className="h-32 lg:h-48 mb-3 lg:mb-4">
               <MonthlyRevenueChart />
             </div>
             
             {/* Stats Grid */}
-            <div className="grid grid-cols-3 gap-3 lg:gap-4 pt-4 border-t border-gray-700">
+            <div className="grid grid-cols-3 gap-2 lg:gap-4 pt-3 lg:pt-4 border-t border-gray-700">
               <div className="text-center">
                 <div className="text-gray-400 text-xs lg:text-sm mb-1">Current</div>
                 <div className="text-white font-semibold text-sm lg:text-base">$350K</div>
@@ -1436,14 +1216,14 @@ const DashboardContent = () => {
           {/* Stock Turnover Rate */}
           <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4 lg:p-6 backdrop-blur-sm">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
-              <h3 className="text-base lg:text-lg font-semibold text-white">Stock Turnover</h3>
+              <h3 className="text-base lg:text-lg font-semibold text-white">Stock Turnover Rate</h3>
             </div>
             
-            <div className="flex justify-center mb-4 lg:mb-6">
+            <div className="flex justify-center mb-3 lg:mb-4">
               <StockTurnoverChart />
             </div>
             
-            <div className="grid grid-cols-3 gap-3 lg:gap-4 pt-4 border-t border-gray-700">
+            <div className="grid grid-cols-3 gap-2 lg:gap-4 pt-3 lg:pt-4 border-t border-gray-700">
               <div className="text-center">
                 <div className="text-gray-400 text-xs lg:text-sm mb-1">Avg Turnover</div>
                 <div className="text-white font-semibold text-sm lg:text-base">4.3x</div>
@@ -1464,18 +1244,198 @@ const DashboardContent = () => {
   );
 };
 
-// Main Dashboard Component
-const ManufacturerDashboard = () => {
+
+
+// Add this inside the WholesalerDashboard component, before the return statement
+const WholesalerDashboard = () => {
+  const [socket, setSocket] = useState(null);
+
+ // In WholesalerDashboard - Update the socket listeners:
+// In WholesalerDashboard - Replace the entire socket useEffect with this:
+
+useEffect(() => {
+  const newSocket = io("http://localhost:8080", {
+    transports: ['websocket', 'polling']
+  });
+  
+  setSocket(newSocket);
+
+  const getUserDataInsideEffect = () => {
+    try {
+      let userData = localStorage.getItem('userData') || sessionStorage.getItem('userData');
+      if (!userData) return null;
+      return JSON.parse(userData);
+    } catch (error) {
+      console.error('❌ Error parsing user data:', error);
+      return null;
+    }
+  };
+
+  newSocket.on('connect', () => {
+    console.log('✅ Wholesaler connected to server');
+    
+    const userData = getUserDataInsideEffect();
+    if (userData?.id) {
+      newSocket.emit('join-wholesaler', userData.id);
+      console.log(`🏪 Joined wholesaler room: ${userData.id}`);
+    }
+  });
+
+  // 🆕 PROPERLY HANDLE ORDER UPDATE EVENTS
+  newSocket.on("orderUpdate", (data) => {
+    console.log("📦 ORDER UPDATE RECEIVED FROM MANUFACTURER:", {
+      orderId: data.orderId,
+      status: data.status,
+      wholesalerId: data.wholesalerId,
+      manufacturerId: data.manufacturerId,
+      timestamp: data.timestamp
+    });
+    
+    // Determine notification type based on status
+    const isApproved = data.status === 'approved' || data.status === 'accepted';
+    const notificationType = isApproved ? 'order_approved' : 'order_rejected';
+    const notificationTitle = isApproved ? 'Order Approved!' : 'Order Rejected';
+    const notificationMessage = isApproved 
+      ? `Your order #${data.orderId} has been approved by the manufacturer`
+      : `Your order #${data.orderId} was rejected. Reason: ${data.rejectionReason || 'No reason provided'}`;
+
+    console.log('🎉 Creating notification:', {
+      type: notificationType,
+      title: notificationTitle,
+      message: notificationMessage
+    });
+    
+    // Show browser notification
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification(notificationTitle, {
+        body: notificationMessage,
+        icon: logo
+      });
+    }
+    
+    // Trigger UI updates
+    window.dispatchEvent(new CustomEvent('orderStatusUpdated', { 
+      detail: { 
+        orderId: data.orderId, 
+        status: data.status,
+        message: notificationMessage
+      } 
+    }));
+
+    // Refresh notifications
+    window.dispatchEvent(new Event('refreshNotifications'));
+    
+    console.log('✅ UI update events triggered');
+  });
+
+  // Also listen for orderStatusUpdate events
+  newSocket.on("orderStatusUpdate", (data) => {
+    console.log("🔔 Order status update received:", data);
+    // Handle orderStatusUpdate events if needed
+  });
+
+  // Listen for test responses
+  newSocket.on("testResponse", (data) => {
+    console.log("🧪 Test response from server:", data);
+  });
+
+  return () => {
+    console.log('🔌 Disconnecting wholesaler socket...');
+    newSocket.disconnect();
+  };
+}, []);
+
+// Update the testSocketConnection function:
+const testSocketConnection = () => {
+  if (socket) {
+    console.log('🔍 Testing socket connection...');
+    console.log('Socket connected:', socket.connected);
+    console.log('Socket ID:', socket.id);
+    
+    // Test sending a message to server
+    socket.emit('test', { 
+      message: 'Test from wholesaler dashboard',
+      timestamp: new Date().toISOString(),
+      userId: getUserData()?.id 
+    });
+    console.log('✅ Test message sent to server');
+    
+    // Test receiving by simulating an order update
+    console.log('🧪 Simulating incoming order update for UI testing...');
+    const testData = {
+      orderId: 'TEST_' + Date.now(),
+      status: 'approved',
+      message: 'This is a test order approval from manufacturer',
+      timestamp: new Date().toISOString(),
+      manufacturerId: 25
+    };
+    
+    // Simulate receiving an order update (tests UI without needing manufacturer)
+    setTimeout(() => {
+      // Directly trigger the socket event handler for testing
+      if (socket) {
+        socket.emit('orderUpdate', testData);
+      }
+      
+      // Also trigger UI updates directly
+      window.dispatchEvent(new CustomEvent('orderStatusUpdated', { 
+        detail: { orderId: testData.orderId, status: testData.status } 
+      }));
+      window.dispatchEvent(new Event('refreshNotifications'));
+      console.log('✅ Test events triggered - check notifications bell!');
+    }, 1000);
+    
+  } else {
+    console.warn('❌ Socket not connected - cannot test');
+    console.log('Socket state:', socket);
+  }
+};// Add this helper function inside WholesalerDashboard component
+const getUserData = () => {
+  try {
+    let userData = localStorage.getItem('userData') || sessionStorage.getItem('userData');
+    if (!userData) return null;
+    return JSON.parse(userData);
+  } catch (error) {
+    console.error('❌ Error parsing user data:', error);
+    return null;
+  }
+};
+
   return (
     <MobileMenuProvider>
       <NotificationProvider>
         <div className="flex h-screen bg-gradient-to-br from-gray-900 to-gray-950">
           <Sidebar />
+           
+        {/* 🆕 TEMPORARY DEBUG PANEL - Remove after testing */}
+        <div className="fixed bottom-4 left-4 z-50 bg-gray-800 border border-gray-600 rounded-lg p-3 max-w-xs">
+          <div className="text-white text-sm font-medium mb-2">Socket Debug</div>
+          <div className="text-xs space-y-1">
+            <div className="text-green-400">Connected: {socket?.connected ? 'Yes' : 'No'}</div>
+            <div className="text-blue-400">ID: {socket?.id || 'None'}</div>
+            <button 
+              onClick={testSocketConnection}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs mt-2"
+            >
+              Test
+            </button>
+          </div>
+        </div>
+        
+        {/* 🆕 TEMPORARY TEST BUTTON - You can remove this later */}
+        <div className="fixed bottom-4 right-4 z-50">
+          <button 
+            onClick={testSocketConnection}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-lg font-medium text-sm flex items-center gap-2"
+          >
+            <Zap className="w-4 h-4" />
+            Test Socket
+          </button>
+        </div>
           <DashboardContent />
         </div>
       </NotificationProvider>
     </MobileMenuProvider>
   );
 };
-
-export default ManufacturerDashboard;
+export default WholesalerDashboard;
