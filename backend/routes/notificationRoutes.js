@@ -7,8 +7,7 @@ import {
 } from '../utils/notificationHelper.js';
 
 const router = express.Router();
-
-// Get notifications for user with filtering
+// In routes/notifications.js - Optimize the GET endpoint
 router.get('/:userId', (req, res) => {
   const db = req.db;
   const { userId } = req.params;
@@ -20,52 +19,61 @@ router.get('/:userId', (req, res) => {
     unread_only 
   } = req.query;
 
-  let sql = `
-    SELECT 
-      id,
-      user_id,
-      title,
-      message,
-      type,
-      related_order_id,
-      is_read,
-      created_at
-    FROM notifications 
-    WHERE user_id = ?
-  `;
-  
-  const params = [userId];
+  console.log(`📡 Fetching notifications for user ${userId}`);
 
-  // Add filters
-  if (type) {
-    sql += ` AND type = ?`;
-    params.push(type);
-  }
-  
-  if (is_read !== undefined) {
-    sql += ` AND is_read = ?`;
-    params.push(is_read === 'true' ? 1 : 0);
-  }
-  
-  if (unread_only === 'true') {
-    sql += ` AND is_read = 0`;
-  }
+  // Create promises for parallel execution
+  const notificationsPromise = new Promise((resolve, reject) => {
+    let sql = `
+      SELECT 
+        id,
+        user_id,
+        title,
+        message,
+        type,
+        related_order_id,
+        is_read,
+        created_at
+      FROM notifications 
+      WHERE user_id = ?
+    `;
+    
+    const params = [userId];
 
-  sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
-
-  const offset = (parseInt(page) - 1) * parseInt(limit);
-  params.push(parseInt(limit), offset);
-
-  db.query(sql, params, (err, results) => {
-    if (err) {
-      console.error("❌ Error fetching notifications:", err);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to fetch notifications"
-      });
+    // Add filters
+    if (type) {
+      sql += ` AND type = ?`;
+      params.push(type);
+    }
+    
+    if (is_read !== undefined) {
+      sql += ` AND is_read = ?`;
+      params.push(is_read === 'true' ? 1 : 0);
+    }
+    
+    if (unread_only === 'true') {
+      sql += ` AND is_read = 0`;
     }
 
-    // Get total counts
+    sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    params.push(parseInt(limit), offset);
+
+    db.query(sql, params, (err, results) => {
+      if (err) reject(err);
+      else resolve(results);
+    });
+  });
+
+  const unreadCountPromise = new Promise((resolve, reject) => {
+    const unreadSql = `SELECT COUNT(*) as unreadCount FROM notifications WHERE user_id = ? AND is_read = 0`;
+    db.query(unreadSql, [userId], (err, results) => {
+      if (err) reject(err);
+      else resolve(results[0].unreadCount);
+    });
+  });
+
+  const totalCountPromise = new Promise((resolve, reject) => {
     let countSql = `SELECT COUNT(*) as total FROM notifications WHERE user_id = ?`;
     const countParams = [userId];
     
@@ -78,40 +86,36 @@ router.get('/:userId', (req, res) => {
       countParams.push(type);
     }
 
-    db.query(countSql, countParams, (countErr, countResults) => {
-      if (countErr) {
-        console.error("❌ Error fetching notification counts:", countErr);
-        return res.json({
-          success: true,
-          notifications: results,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: results.length,
-            totalPages: 1
-          }
-        });
-      }
-
-      // Get unread count separately
-      const unreadSql = `SELECT COUNT(*) as unreadCount FROM notifications WHERE user_id = ? AND is_read = 0`;
-      db.query(unreadSql, [userId], (unreadErr, unreadResults) => {
-        const unreadCount = unreadErr ? 0 : unreadResults[0].unreadCount;
-
-        res.json({
-          success: true,
-          notifications: results,
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: countResults[0].total,
-            unreadCount: unreadCount,
-            totalPages: Math.ceil(countResults[0].total / parseInt(limit))
-          }
-        });
-      });
+    db.query(countSql, countParams, (err, results) => {
+      if (err) reject(err);
+      else resolve(results[0].total);
     });
   });
+
+  // Execute all queries in parallel
+  Promise.all([notificationsPromise, unreadCountPromise, totalCountPromise])
+    .then(([notifications, unreadCount, total]) => {
+      console.log(`✅ Fetched ${notifications.length} notifications for user ${userId}, ${unreadCount} unread`);
+      
+      res.json({
+        success: true,
+        notifications: notifications,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: total,
+          unreadCount: unreadCount,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      });
+    })
+    .catch(error => {
+      console.error("❌ Error fetching notifications:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch notifications"
+      });
+    });
 });
 
 // Mark notification as read
@@ -245,5 +249,6 @@ router.get('/:userId/stats', (req, res) => {
     });
   });
 });
+
 
 export default router;

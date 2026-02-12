@@ -1,11 +1,33 @@
+// config/database.js - Combined file with both database and email
+import mysql from 'mysql2';
+import dotenv from 'dotenv';
 import nodemailer from "nodemailer";
+import fs from 'fs';
 
-// Create transporter
-const transporter = nodemailer.createTransporter({
+dotenv.config();
+
+// ============ DATABASE CONNECTION ============
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'scm_database',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Export database as default
+const db = pool.promise();
+export default db;
+
+// ============ EMAIL CONFIGURATION ============
+// FIX: createTransport NOT createTransport (you had a typo)
+const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "hariniandal2005@gmail.com",
-    pass: "mbpt vjlh dgtn zbui",
+    user: process.env.EMAIL_USER || "hariniandal2005@gmail.com",
+    pass: process.env.EMAIL_PASS || "mbpt vjlh dgtn zbui",
   },
 });
 
@@ -72,6 +94,45 @@ const emailTemplates = {
         </div>
       </div>
     `
+  }),
+  
+  // Add invoice email template
+  invoice: (invoiceData) => ({
+    subject: `📄 Invoice ${invoiceData.invoice_number} - ${invoiceData.manufacturer_business_name}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #4F46E5; color: white; padding: 20px; text-align: center;">
+          <h1 style="margin: 0;">Invoice ${invoiceData.invoice_number}</h1>
+          <p>From: ${invoiceData.manufacturer_business_name}</p>
+        </div>
+        
+        <div style="padding: 20px; background: #f9f9f9;">
+          <p>Dear ${invoiceData.wholesaler_business_name},</p>
+          
+          <p>Please find attached your invoice <strong>${invoiceData.invoice_number}</strong> 
+             from ${invoiceData.manufacturer_business_name}.</p>
+          
+          <div style="background: white; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="color: #4F46E5;">Invoice Summary</h3>
+            <p><strong>Invoice Number:</strong> ${invoiceData.invoice_number}</p>
+            <p><strong>Invoice Date:</strong> ${new Date(invoiceData.invoice_date).toLocaleDateString()}</p>
+            <p><strong>Due Date:</strong> ${new Date(invoiceData.due_date).toLocaleDateString()}</p>
+            <p><strong>Total Amount:</strong> ₹${parseFloat(invoiceData.total_amount).toFixed(2)}</p>
+          </div>
+          
+          <p>You can also view and manage this invoice in your MediVerse dashboard.</p>
+          
+          <p>Best regards,<br>
+          <strong>${invoiceData.manufacturer_business_name}</strong><br>
+          MediVerse Platform</p>
+        </div>
+        
+        <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+          <p>This email was sent automatically from the MediVerse platform.</p>
+          <p>© ${new Date().getFullYear()} MediVerse. All rights reserved.</p>
+        </div>
+      </div>
+    `
   })
 };
 
@@ -81,7 +142,7 @@ export const sendOrderEmail = async (to, templateName, data) => {
     const template = emailTemplates[templateName](data);
     
     const mailOptions = {
-      from: "Pharma Supply Chain <hariniandal2005@gmail.com>",
+      from: process.env.EMAIL_FROM || "Pharma Supply Chain <hariniandal2005@gmail.com>",
       to: to,
       subject: template.subject,
       html: template.html
@@ -96,12 +157,48 @@ export const sendOrderEmail = async (to, templateName, data) => {
   }
 };
 
-// OTP Email function (keep your existing)
+// Send invoice email
+
+export const sendInvoiceEmail = async (to, invoiceData, pdfPath) => {
+  try {
+    const template = emailTemplates.invoice(invoiceData);
+    
+    // Prepare attachments
+    const attachments = [];
+    
+    if (pdfPath && fs.existsSync(pdfPath)) {
+      attachments.push({
+        filename: `invoice_${invoiceData.invoice_number}.pdf`,
+        path: pdfPath,
+        contentType: 'application/pdf'
+      });
+    } else {
+      console.warn(`⚠️ PDF file not found at: ${pdfPath}`);
+    }
+    
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || "MediVerse <hariniandal2005@gmail.com>",
+      to: to,
+      subject: template.subject,
+      html: template.html,
+      attachments: attachments
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ Invoice email sent to ${to} with ${attachments.length} attachment(s)`);
+    return info;
+  } catch (error) {
+    console.error('❌ Invoice email sending failed:', error);
+    throw error;
+  }
+};
+
+// OTP Email function
 export const sendOtpEmail = async (to, otp, businessName) => {
   const mailOptions = {
-    from: "hariniandal2005@gmail.com",
+    from: process.env.EMAIL_FROM || "hariniandal2005@gmail.com",
     to,
-    subject: "Company Verification OTP - MediCare Chain",
+    subject: "Company Verification OTP - Mediverse",
     text: `
 Hi ${businessName || "User"},
 
@@ -124,3 +221,6 @@ MediCare Chain Team
     throw new Error("Email sending failed");
   }
 };
+
+// Also export the transporter if needed elsewhere
+export { transporter };

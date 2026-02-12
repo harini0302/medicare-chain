@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, createContext, useContext, useEffect } from "react";
 import axios from "axios";
 import bg from "../assets/bg.png"
 import logo from "../assets/logo.png";
@@ -6,6 +6,136 @@ import { useNavigate } from "react-router-dom";
 import { motion } from 'framer-motion';
 import { useInView } from 'react-intersection-observer';
 
+// ==================== CUSTOM ALERT SYSTEM ====================
+const AlertContext = createContext();
+
+export const useAlert = () => {
+  const context = useContext(AlertContext);
+  if (!context) {
+    throw new Error('useAlert must be used within AlertProvider');
+  }
+  return context;
+};
+
+const CustomAlert = ({ alert, onClose }) => {
+  const [isVisible, setIsVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+      setTimeout(onClose, 300); // Wait for animation to complete
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  const alertColors = {
+    error: 'bg-red-50 border-red-200 text-red-800',
+    success: 'bg-green-50 border-green-200 text-green-800',
+    warning: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+    info: 'bg-blue-50 border-blue-200 text-blue-800',
+  };
+
+  const iconColors = {
+    error: 'text-red-400',
+    success: 'text-green-400',
+    warning: 'text-yellow-400',
+    info: 'text-blue-400',
+  };
+
+  if (!isVisible) return null;
+
+  return (
+    <div className={`${alertColors[alert.type]} border rounded-lg shadow-lg p-4 mb-2 animate-slideIn`}>
+      <div className="flex items-start">
+        <div className="flex-shrink-0">
+          {alert.type === 'error' && (
+            <svg className={`h-6 w-6 ${iconColors[alert.type]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          )}
+          {alert.type === 'success' && (
+            <svg className={`h-6 w-6 ${iconColors[alert.type]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          )}
+          {alert.type === 'warning' && (
+            <svg className={`h-6 w-6 ${iconColors[alert.type]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          )}
+          {alert.type === 'info' && (
+            <svg className={`h-6 w-6 ${iconColors[alert.type]}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          )}
+        </div>
+        <div className="ml-3 flex-1">
+          <p className="text-sm font-medium">{alert.message}</p>
+        </div>
+        <button
+          onClick={() => {
+            setIsVisible(false);
+            setTimeout(onClose, 300);
+          }}
+          className="ml-4 flex-shrink-0 text-gray-400 hover:text-gray-600"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const AlertProvider = ({ children }) => {
+  const [alerts, setAlerts] = useState([]);
+
+  const showAlert = (message, type = 'error') => {
+    const id = Date.now();
+    setAlerts(prev => [...prev, { id, message, type }]);
+  };
+
+  const hideAlert = (id) => {
+    setAlerts(prev => prev.filter(alert => alert.id !== id));
+  };
+
+  return (
+    <AlertContext.Provider value={{ showAlert, hideAlert }}>
+      {children}
+      <div className="fixed top-4 right-4 z-[1000] w-96 max-h-screen overflow-hidden">
+        {alerts.map(alert => (
+          <CustomAlert
+            key={alert.id}
+            alert={alert}
+            onClose={() => hideAlert(alert.id)}
+          />
+        ))}
+      </div>
+    </AlertContext.Provider>
+  );
+};
+
+// Add CSS styles for animation
+const alertStyles = `
+  @keyframes slideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  
+  .animate-slideIn {
+    animation: slideIn 0.3s ease-out;
+  }
+`;
+
+// ==================== FEATURES SECTION ====================
 const FeaturesSection = () => {
   const [ref, inView] = useInView({
     triggerOnce: true,
@@ -43,6 +173,7 @@ const FeaturesSection = () => {
 
   return (
     <section className="py-20 bg-white/80 backdrop-blur-sm">
+      <style>{alertStyles}</style>
       <div className="max-w-7xl mx-auto px-6">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -50,7 +181,7 @@ const FeaturesSection = () => {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <h2 className="text-4xl font-bold mb-4 text-gray-800">Why Choose Medi-Care Chain?</h2>
+          <h2 className="text-4xl font-bold mb-4 text-gray-800">Why Choose MediVerse?</h2>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
             Revolutionizing healthcare logistics with cutting-edge technology and reliable supply chain solutions
           </p>
@@ -133,7 +264,7 @@ const FeaturesSection = () => {
   );
 };
 
-// Navbar Component (moved outside LandingPage)
+// ==================== NAVBAR COMPONENT ====================
 const Navbar = ({ toggleModal }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -237,18 +368,20 @@ const Navbar = ({ toggleModal }) => {
   );
 };
 
+// ==================== MAIN LANDING PAGE ====================
 const LandingPage = () => {
   const [showModal, setShowModal] = useState(false);
   const [step, setStep] = useState("login");
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const { showAlert } = useAlert();
   
   const toggleModal = () => {
     setShowModal(!showModal);
     if (!showModal) setStep("login");
   };
 
-  // Form Handlers (same as before)
+  // Form Handlers
   const handleRegister = async (e) => {
     e.preventDefault();
     setIsLoading(true);
@@ -263,33 +396,33 @@ const LandingPage = () => {
 
     const nameRegex = /^[A-Za-z\s]+$/;
     if (!nameRegex.test(fullName)) {
-      alert("Full Name should contain only letters and spaces.");
+      showAlert("Full Name should contain only letters and spaces.", "error");
       setIsLoading(false);
       return;
     }
 
     if (!email.endsWith("@gmail.com")) {
-      alert("Email must be a Gmail address.");
+      showAlert("Email must be a Gmail address.", "error");
       setIsLoading(false);
       return;
     }
 
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(phoneNumber)) {
-      alert("Phone number must be 10 digits.");
+      showAlert("Phone number must be 10 digits.", "error");
       setIsLoading(false);
       return;
     }
 
     const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
     if (!passwordRegex.test(password)) {
-      alert("Password must be at least 8 characters long and include both letters and numbers.");
+      showAlert("Password must be at least 8 characters long and include both letters and numbers.", "error");
       setIsLoading(false);
       return;
     }
 
     if (password !== confirmPassword) {
-      alert("Passwords do not match.");
+      showAlert("Passwords do not match.", "error");
       setIsLoading(false);
       return;
     }
@@ -305,16 +438,16 @@ const LandingPage = () => {
       if (response.status === 200) {
         localStorage.setItem("userRole", role);
         localStorage.setItem("userData", JSON.stringify({ 
-        email: email,
-        fullName: fullName,
-        role: role 
-      }));
+          email: email,
+          fullName: fullName,
+          role: role 
+        }));
       
-      alert("Registration successful! Please verify your company.");
+        showAlert("Registration successful! Please verify your company.", "success");
       }
       setStep("login");
     } catch (err) {
-      alert(err.response?.data?.message || "Registration failed");
+      showAlert(err.response?.data?.message || "Registration failed", "error");
     } finally {
       setIsLoading(false);
     }
@@ -329,13 +462,13 @@ const LandingPage = () => {
     const password = formData.get("password");
 
     if (!email.endsWith("@gmail.com")) {
-      alert("Email must be a Gmail address.");
+      showAlert("Email must be a Gmail address.", "error");
       setIsLoading(false);
       return;
     }
 
     if (password.length < 8) {
-      alert("Password must be at least 8 characters long.");
+      showAlert("Password must be at least 8 characters long.", "error");
       setIsLoading(false);
       return;
     }
@@ -344,21 +477,30 @@ const LandingPage = () => {
       const response = await axios.post("http://localhost:8080/api/login", { email, password });
       console.log("Server response:", response.data);
 
-      localStorage.setItem("userData", JSON.stringify(response.data.user));
-      localStorage.setItem("userRole", response.data.user.role?.toLowerCase());
+      // ✅ FIXED: Save ALL user data including ID
+      const userData = response.data.user;
+      localStorage.setItem("userData", JSON.stringify(userData));
+      localStorage.setItem("userRole", userData.role?.toLowerCase());
+      localStorage.setItem("userId", userData.id); // ✅ CRITICAL: Save ID separately
 
-      const role = response.data.user.role?.toLowerCase();
+      console.log("✅ Saved to localStorage:", {
+        userId: userData.id,
+        email: userData.email,
+        role: userData.role
+      });
+
+      const role = userData.role?.toLowerCase();
       navigate(`/${role}/dashboard`);
       setShowModal(false);
 
     } catch (err) {
       if (err.response?.status === 403) {
-        alert("Please verify your company before logging in.");
+        showAlert("Please verify your company before logging in.", "warning");
         localStorage.setItem("userData", JSON.stringify({ email: email }));       
         setStep("verify");
         return;
       }
-      alert(err.response?.data?.message || "Login failed");
+      showAlert(err.response?.data?.message || "Login failed", "error");
     } finally {
       setIsLoading(false);
     }
@@ -371,20 +513,13 @@ const LandingPage = () => {
     let userData = JSON.parse(localStorage.getItem("userData"));
     let email = userData?.email;
 
-  
-  // If no email in localStorage, try to get it from the current form or session
-  if (!email) {
-    const formData = new FormData(e.target);
-    email = formData.get("email"); // In case there's an email field in verify form
-  }
-
-  console.log("Verification user email:", email);
     if (!email) {
-      alert("No user email found. Please log in again.");
+      showAlert("No user email found. Please log in again.", "error");
       setIsLoading(false);
       return;
     }
 
+    console.log("Verification user email:", email);
     const formData = new FormData(e.target);
     formData.append("email", email); 
 
@@ -396,14 +531,14 @@ const LandingPage = () => {
       console.log("Server response:", response.data);
 
       if (response.data.success) {
-        alert(response.data.message);
+        showAlert(response.data.message, "success");
         setStep("otp");
       } else {
-        alert(response.data.message);
+        showAlert(response.data.message, "error");
       }
     } catch (err) {
       console.error("Verification error:", err);
-      alert(err.response?.data?.message || "Verification failed");
+      showAlert(err.response?.data?.message || "Verification failed", "error");
     } finally {
       setIsLoading(false);
     }
@@ -414,22 +549,35 @@ const LandingPage = () => {
     setIsLoading(true);
 
     const formData = new FormData(e.target);
-     // ✅ Get email from localStorage as primary source, fallback to form
-  let userData = JSON.parse(localStorage.getItem("userData"));
-  let email = userData?.email || formData.get("email");
-  
-  const otp = formData.get("otp");
+    let userData = JSON.parse(localStorage.getItem("userData"));
+    let email = userData?.email || formData.get("email");
+    const otp = formData.get("otp");
 
-  if (!email) {
-    alert("No email found. Please start the process again.");
-    setIsLoading(false);
-    return;
-  }
+    if (!email) {
+      showAlert("No email found. Please start the process again.", "error");
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const response = await axios.post("http://localhost:8080/api/verify-otp", { email, otp });
 
       if (response.data.success) {
-        alert("✅ OTP Verified Successfully!");
+        showAlert("✅ OTP Verified Successfully!", "success");
+        
+        // ✅ IMPORTANT: Fetch user data after verification to get the ID
+        try {
+          const userResponse = await axios.get(`http://localhost:8080/api/users/email/${email}`);
+          const verifiedUser = userResponse.data.user;
+          
+          // Save complete user data with ID
+          localStorage.setItem("userData", JSON.stringify(verifiedUser));
+          localStorage.setItem("userId", verifiedUser.id);
+          localStorage.setItem("userRole", verifiedUser.role?.toLowerCase());
+        } catch (fetchErr) {
+          console.warn("Could not fetch user details, using existing data");
+        }
+        
         const role = localStorage.getItem("userRole");
         switch (role) {
           case "manufacturer":
@@ -449,10 +597,10 @@ const LandingPage = () => {
         }
         setShowModal(false);
       } else {
-        alert("Invalid OTP, please try again.");
+        showAlert("Invalid OTP, please try again.", "error");
       }
     } catch (err) {
-      alert(err.response?.data?.message || "OTP verification failed");
+      showAlert(err.response?.data?.message || "OTP verification failed", "error");
     } finally {
       setIsLoading(false);
     }
@@ -460,13 +608,14 @@ const LandingPage = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 text-gray-800">
+      <style>{alertStyles}</style>
       {/* Use the Navbar component and pass toggleModal as prop */}
       <Navbar toggleModal={toggleModal} />
 
       {/* Hero Section with Medical Background */}
       <section className="relative min-h-screen flex items-center justify-center pt-16 bg-cover bg-center bg-no-repeat"
-  style={{ backgroundImage: `linear-gradient(rgba(200,200,200,0.3), rgba(255,255,255,0.9)), url(${bg})` }}
->
+        style={{ backgroundImage: `linear-gradient(rgba(200,200,200,0.3), rgba(255,255,255,0.9)), url(${bg})` }}
+      >
         <div className="text-center max-w-4xl mx-auto px-6">
           <h1 className="text-5xl md:text-6xl font-bold mb-6 text-gray-800">
             Your Trusted Partner in 
@@ -506,7 +655,7 @@ const LandingPage = () => {
         <div className="max-w-7xl mx-auto px-6 py-12">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
             <div>
-              <h3 className="text-xl font-bold mb-4">Medi-Care Chain</h3>
+              <h3 className="text-xl font-bold mb-4">MediVerse</h3>
               <p className="text-gray-300">
                 Your trusted partner in health supply chain management and logistics solutions.
               </p>
@@ -531,7 +680,7 @@ const LandingPage = () => {
             </div>
             <div>
               <h4 className="font-semibold mb-4">Contact Info</h4>
-              <p className="text-gray-300">Email: info@medicarechain.com</p>
+              <p className="text-gray-300">Email: info@mediverse.com</p>
               <p className="text-gray-300">Phone: +1 (555) 123-4567</p>
             </div>
           </div>
@@ -771,4 +920,11 @@ const LandingPage = () => {
   );
 };
 
-export default LandingPage;
+// ==================== EXPORT WRAPPED COMPONENT ====================
+const LandingPageWithAlerts = () => (
+  <AlertProvider>
+    <LandingPage />
+  </AlertProvider>
+);
+
+export default LandingPageWithAlerts;

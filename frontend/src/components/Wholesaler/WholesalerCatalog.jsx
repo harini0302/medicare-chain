@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_BASE_URL } from "../../api/apiconfig";
+import { io } from "socket.io-client"; 
 import { 
   LayoutDashboard, 
   Package, 
@@ -8,8 +9,10 @@ import {
   Truck, 
   FileText, 
   Mail, 
+  Bell,
   Ship, 
   Zap, 
+    Edit3,
   LogOut, 
   Search, 
   Building, 
@@ -23,15 +26,28 @@ import {
   User,
   Hash,
   Box,
-  Home
+  Home,
+  Plus,
+  Minus,
+  Trash2,
+  Check,
+  X,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Tag,
+  BarChart,
+  Shield,
+  Info,
+  ExternalLink
 } from "lucide-react";
 import { useNavigate, useLocation } from 'react-router-dom';
-import logo from '../../assets/logo.png'
+import logo from '../../assets/logo.png';
 
 // Simple cn utility function
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 
-// Add this helper function
+// Helper function for image URLs
 const getImageUrl = (imagePath) => {
   if (!imagePath || imagePath === 'No image' || imagePath === 'NULL') return null;
   
@@ -41,6 +57,102 @@ const getImageUrl = (imagePath) => {
     return `http://localhost:8080${imagePath}`;
   }
   return `http://localhost:8080/uploads/${imagePath}`;
+};
+
+// Cart Context
+const CartContext = React.createContext();
+
+const CartProvider = ({ children }) => {
+  const [cart, setCart] = useState([]);
+  const [selectedManufacturer, setSelectedManufacturer] = useState(null);
+
+  const addToCart = (product, quantity = 1) => {
+    const existingItem = cart.find(item => item.id === product.id);
+    
+    if (existingItem) {
+      setCart(cart.map(item => 
+        item.id === product.id 
+          ? { 
+              ...item, 
+              quantity: item.quantity + quantity,
+              unit_price: parseFloat(product.unit_price) || 0
+            }
+          : item
+      ));
+    } else {
+      setCart([...cart, {
+        ...product,
+        quantity: quantity,
+        unit_price: parseFloat(product.unit_price) || 0,
+        cartId: `${product.id}-${Date.now()}`,
+        product_name: product.name,
+        product_id: product.id,
+        manufacturer_id: product.company_id
+      }]);
+    }
+  };
+
+  const removeFromCart = (cartId) => {
+    setCart(cart.filter(item => item.cartId !== cartId));
+  };
+
+  const updateCartQuantity = (cartId, quantity) => {
+    if (quantity < 1) {
+      removeFromCart(cartId);
+      return;
+    }
+    setCart(cart.map(item => 
+      item.cartId === cartId ? { ...item, quantity: quantity } : item
+    ));
+  };
+
+  const clearCart = () => {
+    setCart([]);
+    setSelectedManufacturer(null);
+  };
+
+  const getCartTotals = () => {
+    const subtotal = cart.reduce((sum, item) => {
+      const unitPrice = typeof item.unit_price === 'number' 
+        ? item.unit_price 
+        : parseFloat(item.unit_price) || 0;
+      return sum + (unitPrice * item.quantity);
+    }, 0);
+    
+    const gst = subtotal * 0.18;
+    const total = subtotal + gst;
+    
+    return { 
+      subtotal: parseFloat(subtotal.toFixed(2)), 
+      gst: parseFloat(gst.toFixed(2)), 
+      total: parseFloat(total.toFixed(2)), 
+      items: cart.length,
+      itemCount: cart.reduce((sum, item) => sum + item.quantity, 0)
+    };
+  };
+
+  return (
+    <CartContext.Provider value={{
+      cart,
+      selectedManufacturer,
+      setSelectedManufacturer,
+      addToCart,
+      removeFromCart,
+      updateCartQuantity,
+      clearCart,
+      getCartTotals
+    }}>
+      {children}
+    </CartContext.Provider>
+  );
+};
+
+const useCart = () => {
+  const context = React.useContext(CartContext);
+  if (!context) {
+    throw new Error('useCart must be used within a CartProvider');
+  }
+  return context;
 };
 
 // Sidebar Component
@@ -187,12 +299,490 @@ const ClipboardList = ({ size = 16, className = "" }) => (
   </svg>
 );
 
-// Product Card Component
-const ProductCard = ({ product, onViewDetails }) => {
+// Also update the ProductDetailsModal with similar editable quantity
+const ProductDetailsModal = ({ product, onClose, onAddToCart }) => {
+  const { addToCart, selectedManufacturer } = useCart();
+  const [quantity, setQuantity] = useState(200);
+  const [addingToCart, setAddingToCart] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [editingQuantity, setEditingQuantity] = useState(false);
+  const [tempQuantity, setTempQuantity] = useState("200");
   const imageUrl = getImageUrl(product.image);
 
-  const handleImageClick = () => {
-    onViewDetails(product);
+  const validateAndAddToCart = async () => {
+    if (!selectedManufacturer) {
+      alert("Please select a manufacturer first!");
+      return;
+    }
+    
+    const qty = parseInt(quantity);
+    
+    if (qty < 200) {
+      alert(`Minimum order quantity is 200 units! You entered ${qty}.`);
+      return;
+    }
+    
+    if (qty > product.stock_qty) {
+      alert(`Only ${product.stock_qty} units available!`);
+      return;
+    }
+    
+    if (isNaN(qty) || qty <= 0) {
+      alert("Please enter a valid quantity (minimum 200 units)");
+      return;
+    }
+    
+    setAddingToCart(true);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    addToCart(product, qty);
+    setQuantity(200);
+    setTempQuantity("200");
+    
+    setAddingToCart(false);
+    setAdded(true);
+    
+    setTimeout(() => {
+      setAdded(false);
+      if (onAddToCart) onAddToCart();
+    }, 2000);
+  };
+
+  const handleQuantityEdit = () => {
+    setEditingQuantity(true);
+    setTempQuantity(quantity.toString());
+  };
+
+  const saveQuantity = () => {
+    const newQty = parseInt(tempQuantity);
+    
+    if (isNaN(newQty) || newQty < 200) {
+      alert("Minimum order quantity is 200 units!");
+      setTempQuantity(quantity.toString());
+      setEditingQuantity(false);
+      return;
+    }
+    
+    if (newQty > product.stock_qty) {
+      alert(`Only ${product.stock_qty} units available!`);
+      setTempQuantity(quantity.toString());
+      setEditingQuantity(false);
+      return;
+    }
+    
+    setQuantity(newQty);
+    setEditingQuantity(false);
+  };
+
+  const handleQuantityInputChange = (e) => {
+    const value = e.target.value;
+    if (/^\d*$/.test(value)) {
+      setTempQuantity(value);
+    }
+  };
+
+  const handleQuantityKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      saveQuantity();
+    } else if (e.key === 'Escape') {
+      setEditingQuantity(false);
+      setTempQuantity(quantity.toString());
+    }
+  };
+
+
+  if (!product) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4">
+      <div className="bg-gray-900 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-white">Product Details</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white text-2xl"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="overflow-y-auto max-h-[70vh] p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Left Column - Image */}
+            <div>
+              <div className="bg-gray-800 rounded-lg p-4 mb-4">
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt={product.name}
+                    className="w-full h-64 object-contain rounded-lg"
+                  />
+                ) : (
+                  <div className="w-full h-64 flex items-center justify-center bg-gray-700 rounded-lg">
+                    <div className="text-center text-gray-400">
+                      <div className="text-4xl mb-2">💊</div>
+                      <span>No Image Available</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column - Details */}
+            <div className="space-y-6">
+              <div>
+                <h1 className="text-3xl font-bold text-white mb-2">
+                  {product.name}
+                </h1>
+                <div className="flex items-center gap-4 mb-4">
+                  <span className="text-green-400 font-bold text-2xl">
+                    ${parseFloat(product.unit_price || 0).toFixed(2)}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-sm ${
+                    product.stock_qty > 0 
+                      ? 'bg-green-500/20 text-green-400' 
+                      : 'bg-red-500/20 text-red-400'
+                  }`}>
+                    {product.stock_qty > 0 ? `${product.stock_qty} in stock` : 'Out of Stock'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description */}
+              {product.description && (
+                <div>
+                  <h3 className="text-gray-300 font-medium mb-2">Description</h3>
+                  <p className="text-gray-400 bg-gray-800 rounded-lg p-4">
+                    {product.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Product Details Table - UPDATED */}
+              <div className="bg-gray-800 rounded-lg p-4">
+                <h3 className="text-gray-300 font-medium mb-3">Product Information</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Manufacturer */}
+                  <div>
+                    <label className="text-gray-400 text-sm">Manufacturer</label>
+                    <p className="text-white">{product.businessName || product.company_name || "N/A"}</p>
+                  </div>
+                  
+                  {/* Category */}
+                  <div>
+                    <label className="text-gray-400 text-sm">Category</label>
+                    <p className="text-white">{product.category || "N/A"}</p>
+                  </div>
+                  
+                  
+                  
+                  {/* Manufacturing Date */}
+                  <div>
+                    <label className="text-gray-400 text-sm">Manufacturing Date</label>
+                    <p className="text-white">
+                      {product.mfg_date 
+                        ? new Date(product.mfg_date).toLocaleDateString() 
+                        : "N/A"}
+                    </p>
+                  </div>
+                  
+                  {/* Expiry Date */}
+                  <div>
+                    <label className="text-gray-400 text-sm">Expiry Date</label>
+                    <p className="text-white">
+                      {product.expiry_date 
+                        ? new Date(product.expiry_date).toLocaleDateString() 
+                        : "N/A"}
+                    </p>
+                  </div>
+                  
+                  {/* GST Percentage */}
+                  <div>
+                    <label className="text-gray-400 text-sm">GST Percentage</label>
+                    <p className="text-white">{product.gst_percentage || "18"}%</p>
+                  </div>
+                  
+                  {/* Salt Name */}
+                  {product.salt_name && (
+                    <div>
+                      <label className="text-gray-400 text-sm">Salt Name</label>
+                      <p className="text-white">{product.salt_name}</p>
+                    </div>
+                  )}
+                  
+                  {/* Dosage (if available) */}
+                  {product.dosage && (
+                    <div>
+                      <label className="text-gray-400 text-sm">Dosage</label>
+                      <p className="text-white">{product.dosage}</p>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Additional Information Row (if needed) */}
+                {(product.packaging || product.storage_conditions) && (
+                  <div className="mt-4 pt-4 border-t border-gray-700 grid grid-cols-2 gap-4">
+                    {product.packaging && (
+                      <div>
+                        <label className="text-gray-400 text-sm">Packaging</label>
+                        <p className="text-white">{product.packaging}</p>
+                      </div>
+                    )}
+                    {product.storage_conditions && (
+                      <div>
+                        <label className="text-gray-400 text-sm">Storage Conditions</label>
+                        <p className="text-white">{product.storage_conditions}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Quantity Selector and Add to Cart */}
+              <div className="bg-gray-800 rounded-lg p-4">
+      <div className="space-y-4">
+        {/* Quantity Selector */}
+        <div>
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-gray-300 font-medium">Quantity</label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-yellow-400">Min: 200 units</span>
+              {quantity < 200 && (
+                <span className="text-red-400 text-sm">❌</span>
+              )}
+            </div>
+          </div>
+          
+          {editingQuantity ? (
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={tempQuantity}
+                onChange={handleQuantityInputChange}
+                onKeyDown={handleQuantityKeyPress}
+                onBlur={saveQuantity}
+                className="flex-1 bg-gray-700 border-2 border-purple-500 rounded-lg px-4 py-3 text-white text-center text-lg"
+                autoFocus
+              />
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={saveQuantity}
+                  className="bg-green-600 hover:bg-green-700 text-white p-2 rounded-lg"
+                  title="Save"
+                >
+                  <Check size={18} />
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingQuantity(false);
+                    setTempQuantity(quantity.toString());
+                  }}
+                  className="bg-gray-700 hover:bg-gray-600 text-white p-2 rounded-lg"
+                  title="Cancel"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              onClick={handleQuantityEdit}
+              className="bg-gray-700 rounded-lg p-4 cursor-pointer hover:bg-gray-600 transition-colors"
+            >
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="text-white text-2xl font-bold">
+                    {quantity} units
+                  </div>
+                  <div className="text-gray-400 text-sm mt-1">
+                    Click to edit quantity
+                  </div>
+                </div>
+                <Edit3 size={20} className="text-purple-400" />
+              </div>
+            </div>
+          )}
+          
+          {/* Quick adjustment buttons */}
+          {!editingQuantity && (
+            <div className="flex gap-3 mt-3">
+              <button
+                onClick={() => setQuantity(prev => Math.max(200, prev - 100))}
+                className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+              >
+                -100
+              </button>
+              <button
+                onClick={() => setQuantity(prev => Math.min(product.stock_qty, prev + 100))}
+                className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+              >
+                +100
+              </button>
+            </div>
+          )}
+        </div>
+        
+        {/* Add to Cart Button */}
+        <button
+          onClick={validateAndAddToCart}
+          disabled={!selectedManufacturer || product.stock_qty < 200 || quantity < 200 || addingToCart || added}
+          className={`w-full py-4 rounded-lg font-bold text-lg transition-all flex items-center justify-center gap-3 ${
+            !selectedManufacturer
+              ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              : quantity < 200
+                ? 'bg-red-600 hover:bg-red-700 text-white'
+                : addingToCart
+                  ? 'bg-blue-700 cursor-wait'
+                  : added
+                    ? 'bg-green-600'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+          }`}
+        >
+          {!selectedManufacturer ? (
+            'Select Manufacturer First'
+          ) : product.stock_qty < 200 ? (
+            'Insufficient Stock'
+          ) : quantity < 200 ? (
+            <>
+              <AlertCircle size={20} />
+              Minimum 200 Units Required
+            </>
+          ) : addingToCart ? (
+            <>
+              <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              Adding to Cart...
+            </>
+          ) : added ? (
+            <>
+              <Check size={20} className="animate-bounce" />
+              Added to Cart!
+            </>
+          ) : (
+            <>
+              <ShoppingCart size={20} />
+              Add to Cart ({quantity} units)
+            </>
+          )}
+        </button>
+      </div>
+    </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+// Product Card Component - FIXED VERSION
+// Product Card Component - UPDATED with editable quantity and min 200 validation
+const ProductCard = ({ product, onViewDetails }) => {
+  const imageUrl = getImageUrl(product.image);
+  const { addToCart, selectedManufacturer } = useCart();
+  const [quantity, setQuantity] = useState(200); // Start with minimum 200
+  const [addingToCart, setAddingToCart] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [editingQuantity, setEditingQuantity] = useState(false);
+  const [tempQuantity, setTempQuantity] = useState("200");
+
+  // Check if product is out of stock
+  const isOutOfStock = (product.stock_qty || 0) <= 0;
+
+  // Don't render out of stock products
+  if (isOutOfStock) {
+    return null;
+  }
+
+  // Validate quantity before adding to cart
+  const validateAndAddToCart = async () => {
+    if (!selectedManufacturer) {
+      alert("Please select a manufacturer first!");
+      return;
+    }
+    
+    // Convert to number and validate
+    const qty = parseInt(quantity);
+    
+    // Minimum 200 validation
+    if (qty < 200) {
+      alert(`Minimum order quantity is 200 units! You entered ${qty}.`);
+      return;
+    }
+    
+    // Stock validation
+    if (qty > product.stock_qty) {
+      alert(`Only ${product.stock_qty} units available!`);
+      return;
+    }
+    
+    // Check if quantity is a valid number
+    if (isNaN(qty) || qty <= 0) {
+      alert("Please enter a valid quantity (minimum 200 units)");
+      return;
+    }
+    
+    // Show loading/click feedback
+    setAddingToCart(true);
+    
+    // Simulate a short delay for better UX
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    addToCart(product, qty);
+    setQuantity(200); // Reset to minimum
+    setTempQuantity("200");
+    
+    // Show success feedback
+    setAddingToCart(false);
+    setAdded(true);
+    
+    // Reset success feedback after 2 seconds
+    setTimeout(() => setAdded(false), 2000);
+  };
+
+  // Handle quantity edit
+  const handleQuantityEdit = () => {
+    setEditingQuantity(true);
+    setTempQuantity(quantity.toString());
+  };
+
+  // Save edited quantity
+  const saveQuantity = () => {
+    const newQty = parseInt(tempQuantity);
+    
+    if (isNaN(newQty) || newQty < 200) {
+      alert("Minimum order quantity is 200 units!");
+      setTempQuantity(quantity.toString());
+      setEditingQuantity(false);
+      return;
+    }
+    
+    if (newQty > product.stock_qty) {
+      alert(`Only ${product.stock_qty} units available!`);
+      setTempQuantity(quantity.toString());
+      setEditingQuantity(false);
+      return;
+    }
+    
+    setQuantity(newQty);
+    setEditingQuantity(false);
+  };
+
+  // Handle input change
+  const handleQuantityInputChange = (e) => {
+    const value = e.target.value;
+    // Allow only numbers
+    if (/^\d*$/.test(value)) {
+      setTempQuantity(value);
+    }
+  };
+
+  // Handle input key press
+  const handleQuantityKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      saveQuantity();
+    } else if (e.key === 'Escape') {
+      setEditingQuantity(false);
+      setTempQuantity(quantity.toString());
+    }
   };
 
   return (
@@ -200,17 +790,13 @@ const ProductCard = ({ product, onViewDetails }) => {
       {/* Image Section */}
       <div 
         className="relative h-48 bg-gray-700 cursor-pointer group"
-        onClick={handleImageClick}
+        onClick={() => onViewDetails(product)}
       >
         {imageUrl ? (
           <img
             src={imageUrl}
             alt={product.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            onError={(e) => {
-              console.error(`Image failed to load for ${product.name}:`, product.image);
-              e.target.style.display = 'none';
-            }}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-600">
@@ -244,469 +830,606 @@ const ProductCard = ({ product, onViewDetails }) => {
           </p>
         )}
         
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center mb-3">
           <span className="text-green-400 font-bold text-lg">
             ${parseFloat(product.unit_price || 0).toFixed(2)}
           </span>
-          <span className={`text-xs px-2 py-1 rounded-full ${
-            (product.stock_qty || 0) > 0 
-              ? 'bg-green-500/20 text-green-400' 
-              : 'bg-red-500/20 text-red-400'
-          }`}>
-            {product.stock_qty > 0 ? 'In Stock' : 'Out of Stock'}
+          <span className="text-xs px-2 py-1 rounded-full bg-green-500/20 text-green-400">
+            {product.stock_qty} in stock
           </span>
+        </div>
+
+        {/* Quantity Selector and Add to Cart - UPDATED */}
+        <div className="space-y-3">
+          {/* Quantity Selector */}
+          <div className="bg-gray-700/50 rounded-lg p-3">
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-gray-300 text-sm font-medium">
+                Quantity (Min: 200)
+              </label>
+              {quantity < 200 && (
+                <span className="text-red-400 text-xs">
+                  ❌ Min 200 required
+                </span>
+              )}
+            </div>
+            
+            {editingQuantity ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={tempQuantity}
+                  onChange={handleQuantityInputChange}
+                  onKeyDown={handleQuantityKeyPress}
+                  onBlur={saveQuantity}
+                  className="flex-1 bg-gray-600 border border-purple-500 rounded px-3 py-2 text-white text-center"
+                  autoFocus
+                />
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={saveQuantity}
+                    className="bg-green-600 hover:bg-green-700 text-white p-1 rounded"
+                    title="Save"
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingQuantity(false);
+                      setTempQuantity(quantity.toString());
+                    }}
+                    className="bg-gray-600 hover:bg-gray-700 text-white p-1 rounded"
+                    title="Cancel"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={handleQuantityEdit}
+                className="flex items-center justify-between bg-gray-600 rounded-lg p-2 cursor-pointer hover:bg-gray-500 transition-colors group"
+                title="Click to edit quantity"
+              >
+                <div className="text-white font-medium">
+                  {quantity} units
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-gray-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                    Click to edit
+                  </div>
+                  <Edit3 size={14} className="text-gray-400" />
+                </div>
+              </div>
+            )}
+            
+            {/* Quick action buttons */}
+            {!editingQuantity && (
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    const newQty = Math.max(200, quantity - 100);
+                    setQuantity(newQty);
+                  }}
+                  className="flex-1 text-xs bg-gray-600 hover:bg-gray-700 text-white py-1 rounded"
+                >
+                  -100
+                </button>
+                <button
+                  onClick={() => {
+                    const newQty = Math.min(product.stock_qty, quantity + 100);
+                    setQuantity(newQty);
+                  }}
+                  className="flex-1 text-xs bg-gray-600 hover:bg-gray-700 text-white py-1 rounded"
+                >
+                  +100
+                </button>
+              </div>
+            )}
+          </div>
+          
+          {/* Add to Cart Button */}
+          <button
+            onClick={validateAndAddToCart}
+            disabled={!selectedManufacturer || product.stock_qty < 200 || addingToCart || added}
+            className={`w-full py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
+              !selectedManufacturer || product.stock_qty < 200
+                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                : quantity < 200
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : addingToCart
+                    ? 'bg-blue-700 cursor-wait'
+                    : added
+                      ? 'bg-green-600'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {!selectedManufacturer ? (
+              'Select Manufacturer First'
+            ) : product.stock_qty < 200 ? (
+              'Insufficient Stock'
+            ) : quantity < 200 ? (
+              <>
+                <AlertCircle size={16} />
+                Min 200 Units Required
+              </>
+            ) : addingToCart ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                Adding...
+              </>
+            ) : added ? (
+              <>
+                <Check size={16} className="animate-bounce" />
+                Added!
+              </>
+            ) : (
+              'Add to Cart'
+            )}
+          </button>
+          
+          {/* Stock Warning */}
+          {product.stock_qty < 200 && (
+            <div className="text-red-400 text-xs text-center mt-1">
+              Minimum order requirement not met (available: {product.stock_qty})
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-// Order Form Component
-const OrderFormSection = ({ 
-  product, 
-  manufacturer, 
-  onBack, 
-  onOrderSuccess 
-}) =>{  const getMinDeliveryDate = () => {
-    const minDate = new Date();
-    minDate.setDate(minDate.getDate() + 3);
-    return minDate.toISOString().split('T')[0];
-  };
+const CartSidebar = ({ isOpen, onClose, onPlaceOrder }) => {
+  const { 
+    cart, 
+    selectedManufacturer, 
+    removeFromCart, 
+    updateCartQuantity,
+    clearCart,
+    getCartTotals 
+  } = useCart();
+  
+  const totals = getCartTotals();
 
-  const getDefaultDeliveryDate = () => {
-    const defaultDate = new Date();
-    defaultDate.setDate(defaultDate.getDate() + 5);
-    return defaultDate.toISOString().split('T')[0];
-  };
+  if (!isOpen) return null;
 
-  const [formData, setFormData] = useState({
-    quantity: 1,
-    payment_mode: "online",
-    preferred_delivery_date: getDefaultDeliveryDate(), // Auto-filled
-    notes: "",
-    delivery_address: ""
-  });
-
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [wholesalerInfo, setWholesalerInfo] = useState(null);
-  const [orderId, setOrderId] = useState("");
-
-  // Generate order ID on component mount
-  useEffect(() => {
-    const generatedOrderId = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    setOrderId(generatedOrderId);
-  }, []);
-
-  // Calculate order details
-  const calculateOrderDetails = () => {
-    if (!product) return {};
-    
-    const quantity = parseInt(formData.quantity) || 1;
-    const unitPrice = parseFloat(product.unit_price) || 0;
-    const subtotal = quantity * unitPrice;
-    const gstAmount = subtotal * 0.18; // Assuming 18% GST
-    const totalAmount = subtotal + gstAmount;
-
-    return {
-      subtotal: subtotal.toFixed(2),
-      gstAmount: gstAmount.toFixed(2),
-      totalAmount: totalAmount.toFixed(2),
-      unitPrice: unitPrice.toFixed(2),
-      quantity: quantity
-    };
-  };
-
-  const orderDetails = calculateOrderDetails();
-
-// Fetch wholesaler info - FIXED VERSION
-useEffect(() => {
-  const fetchWholesalerInfo = async () => {
-    try {
-      const userData = JSON.parse(localStorage.getItem('userData') || '{}');
-      console.log("User data from localStorage:", userData);
-      
-      if (userData.id) {
-        // Use the dedicated wholesaler endpoint
-        const response = await axios.get(`${API_BASE_URL}/wholesalers/user/${userData.id}`);
-        
-        if (response.data) {
-          console.log("Wholesaler data found:", response.data);
-          setWholesalerInfo(response.data);
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-end">
+      <div className="w-full max-w-md bg-gray-900 h-full overflow-y-auto">
+        <div className="p-6 border-b border-gray-800">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-white">Shopping Cart</h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white text-2xl"
+            >
+              ×
+            </button>
+          </div>
           
-          // Set default delivery address
-          setFormData(prev => ({
-            ...prev,
-            delivery_address: response.data.warehouseAddress || 
-                             response.data.address || 
-                             "Enter your warehouse address"
-          }));
-        } else {
-          throw new Error("No wholesaler data returned");
-        }
-      } else {
-        console.error("No user ID found in localStorage");
-        setError("Please log in again to place orders");
-      }
-} catch (error) {
-  console.error("Error fetching wholesaler info:", error);
-  
-  const userData = JSON.parse(localStorage.getItem('userData') || '{}');
-  const fallbackWholesalerInfo = {
-    id: userData.id || 'unknown',
-    businessName: userData.businessName || userData.fullName || "Your Wholesaler Business",
-    warehouseAddress: userData.businessAddress || "Please enter your warehouse address",
-    role: 'wholesaler'
-  };
-  setWholesalerInfo(fallbackWholesalerInfo);
-  setError("Please verify your warehouse address below before placing order.");
-}
-  };
+          {selectedManufacturer && (
+            <div className="mt-2 text-sm text-gray-300">
+              Ordering from: <span className="text-purple-400">{selectedManufacturer.businessName}</span>
+            </div>
+          )}
+        </div>
 
-  fetchWholesalerInfo();
-}, []);
+        {cart.length === 0 ? (
+          <div className="p-8 text-center">
+            <ShoppingCart className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+            <p className="text-gray-400">Your cart is empty</p>
+            <p className="text-gray-500 text-sm mt-1">
+              Add medicines from the catalog
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Cart Items */}
+            <div className="p-4 space-y-4">
+              {cart.map(item => (
+                <div key={item.cartId} className="bg-gray-800 rounded-lg p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h4 className="text-white font-medium mb-1">{item.name}</h4>
+                      <p className="text-gray-400 text-sm mb-2">
+                        ${(item.unit_price || 0).toFixed(2)} each
+                      </p>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => updateCartQuantity(item.cartId, item.quantity - 1)}
+                            className="w-6 h-6 flex items-center justify-center bg-gray-700 hover:bg-gray-600 rounded"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span className="text-white font-medium w-8 text-center">
+                            {item.quantity}
+                          </span>
+                          <button
+                            onClick={() => updateCartQuantity(item.cartId, item.quantity + 1)}
+                            className="w-6 h-6 flex items-center justify-center bg-gray-700 hover:bg-gray-600 rounded"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                        
+                        <div className="text-right">
+                          <div className="text-white font-medium">
+                            ${((item.unit_price || 0) * item.quantity).toFixed(2)}
+                          </div>
+                          <button
+                            onClick={() => removeFromCart(item.cartId)}
+                            className="text-red-400 hover:text-red-300 text-sm mt-1"
+                          >
+                            <Trash2 size={14} className="inline mr-1" />
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-  // Handle form input changes
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-// ✅ NEW SIMPLIFIED handleSubmit function:
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  
-  // ✅ ADD ID conflict validation at the start
-  if (manufacturer.id === wholesalerInfo?.id) {
-    setError("❌ Cannot place order: Manufacturer and Wholesaler cannot be the same company");
-    return;
-  }
+            {/* Cart Summary */}
+            <div className="p-4 border-t border-gray-800">
+              <div className="space-y-2">
+                <div className="flex justify-between text-gray-300">
+                  <span>Subtotal ({cart.length} items)</span>
+                  <span>${totals.subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-300">
+                  <span>GST (18%)</span>
+                  <span>${totals.gst.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-white font-bold text-lg pt-2 border-t border-gray-700">
+                  <span>Total</span>
+                  <span>${totals.total.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
 
-  if (!product || !manufacturer || !wholesalerInfo) {
-    setError("Missing required information");
-    return;
-  }
-
-  if (formData.quantity < 1) {
-    setError("Quantity must be at least 1");
-    return;
-  }
-if (parseInt(formData.quantity) > parseInt(product.stock_qty)) {
-  setError(`Only ${product.stock_qty} units available in stock`);
-  return;
-}
-
-  if (!formData.delivery_address.trim()) {
-    setError("Delivery address is required");
-    return;
-  }
-
-  try {
-    setLoading(true);
-    setError("");
-    
-    const orderData = {
-      order_id: orderId,
-      manufacturer_id: manufacturer.id,
-      wholesaler_id: wholesalerInfo.id,
-      product_id: product.id,
-      quantity: parseInt(formData.quantity),
-      unit_price: parseFloat(product.unit_price),
-      total_amount: parseFloat(orderDetails.totalAmount),
-      gst_percentage: 18,
-      gst_amount: parseFloat(orderDetails.gstAmount),
-      payment_mode: formData.payment_mode,
-      delivery_address: formData.delivery_address,
-      preferred_delivery_date: formData.preferred_delivery_date || null,
-      notes: formData.notes || "",
-      status: "pending",
-      order_date: new Date().toISOString(),
-      product_name: product.name,
-      manufacturer_name: manufacturer.businessName,
-      wholesaler_name: wholesalerInfo.businessName,
-      manufacturer_role: "manufacturer",
-      wholesaler_role: "wholesaler"
-    };
-
-    console.log("Submitting order (pending approval):", orderData);
-
- // In your OrderFormSection
-const response = await axios.post(`${API_BASE_URL}/orders`, orderData);
-if (response.data.success) {
-  console.log('✅ Order placed, email sent, notification saved!');
-}
-    if (response.data && response.data.success) {
-      setSuccess("Order placed successfully! Waiting for manufacturer approval. You'll be notified when it's processed.");
-       // Emit Socket.io event to notify manufacturer
-      if (window.socket) {
-        window.socket.emit('new-order', {
-          manufacturerId: manufacturer.id,
-          orderId: orderId,
-          wholesalerName: wholesalerInfo.businessName,
-          productName: product.name,
-          quantity: parseInt(formData.quantity),
-          totalAmount: parseFloat(orderDetails.totalAmount),
-          orderData: orderData
-        });
-        console.log("📤 Order notification sent to manufacturer:", manufacturer.id);
-      }
-      setTimeout(() => {
-        if (onOrderSuccess) {
-          onOrderSuccess();
-        }
-      }, 3000);
-    } else {
-      setError(response.data?.message || "Order submission failed");
-    }
-  } catch (error) {
-    console.error("Error placing order:", error);
-    setError(error.response?.data?.message || "Failed to place order. Please try again.");
-  } finally {
-    setLoading(false);
-  }
+            {/* Action Buttons */}
+            <div className="p-4 border-t border-gray-800">
+              <button
+                onClick={() => {
+                  onClose();
+                  onPlaceOrder();
+                }}
+                disabled={!selectedManufacturer}
+                className={`w-full py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 ${
+                  !selectedManufacturer
+                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700 text-white'
+                }`}
+              >
+                <CheckCircle size={18} />
+                Proceed to Order Summary ({cart.length} items)
+              </button>
+              
+              {!selectedManufacturer && (
+                <p className="text-red-400 text-sm mt-2 text-center">
+                  Please select a manufacturer first
+                </p>
+              )}
+              
+              <button
+                onClick={onClose}
+                className="w-full mt-3 py-2 text-gray-300 hover:text-white"
+              >
+                Continue Shopping
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 };
 
-  if (!product || !manufacturer) {
-    return (
-      <div className="text-center text-gray-400 bg-gray-800 rounded-lg p-8 border border-gray-700">
-        <div className="text-4xl mb-4">❌</div>
-        <p className="text-lg mb-4">Product or manufacturer information is missing.</p>
-        <button
-          onClick={onBack}
-          className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg"
-        >
-          Back to Catalog
-        </button>
-      </div>
-    );
-  }
+// OrderSummary Component - Updated with 3-day default delivery date
+const OrderSummary = ({ onBack, onSubmit }) => {
+  const navigate = useNavigate();
+  const { cart, selectedManufacturer, clearCart, getCartTotals } = useCart();
+  const [loading, setLoading] = useState(false);
+  const [wholesalerInfo, setWholesalerInfo] = useState(null);
+  const [gstPercent, setGstPercent] = useState(18);
+  const [isEditingGST, setIsEditingGST] = useState(false);
+  
+  // Calculate 3 days from now for default delivery date
+  const getDefaultDeliveryDate = () => {
+    const today = new Date();
+    const threeDaysLater = new Date(today);
+    threeDaysLater.setDate(today.getDate() + 3);
+    
+    // Format to YYYY-MM-DD for input[type="date"]
+    return threeDaysLater.toISOString().split('T')[0];
+  };
+  
+  const [formData, setFormData] = useState({
+    payment_mode: "online",
+    delivery_address: "",
+    preferred_delivery_date: getDefaultDeliveryDate(), // Set default to 3 days from now
+    notes: ""
+  });
+
+  const totals = getCartTotals();
+
+  // Auto-generate order ID
+  const orderId = `ORD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+
+  useEffect(() => {
+    // Fetch wholesaler info for auto-filling address
+    const fetchWholesalerInfo = async () => {
+      try {
+        const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+        if (userData.id) {
+          console.log('🔍 Fetching wholesaler info for user:', userData.id);
+          const response = await axios.get(`${API_BASE_URL}/wholesalers/user/${userData.id}`);
+          
+          if (response.data) {
+            console.log('✅ Wholesaler info received:', response.data);
+            setWholesalerInfo(response.data);
+            
+            // Auto-fill delivery address from backend
+            setFormData(prev => ({
+              ...prev,
+              delivery_address: response.data.warehouseAddress || response.data.businessAddress || ""
+            }));
+          }
+        }
+      } catch (error) {
+        console.error("❌ Error fetching wholesaler info:", error);
+        alert("Could not fetch your warehouse address. Please enter it manually.");
+      }
+    };
+    
+    fetchWholesalerInfo();
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+      
+      if (!userData.id) {
+        alert('Please log in again');
+        return;
+      }
+
+      if (!selectedManufacturer || !selectedManufacturer.id) {
+        alert('Please select a manufacturer first');
+        return;
+      }
+
+      // Calculate totals using the correct GST percentage
+      const subtotal = cart.reduce((sum, item) => {
+        const unitPrice = parseFloat(item.unit_price) || 0;
+        return sum + (item.quantity * unitPrice);
+      }, 0);
+      
+      const gst_amount = subtotal * (gstPercent / 100);
+      const total_amount = subtotal + gst_amount;
+
+      // Prepare items matching your order_items table schema
+      const items = cart.map(item => ({
+        product_id: item.id,
+        medicine_name: item.name || item.product_name,
+        quantity: parseInt(item.quantity),
+        unit_price: parseFloat(item.unit_price),
+        gst_percentage: gstPercent, // Use the editable GST percentage
+        discount_percentage: 0.00
+      }));
+
+      const orderData = {
+        wholesaler_id: parseInt(userData.id),
+        manufacturer_id: parseInt(selectedManufacturer.id),
+        items: items,
+        subtotal: parseFloat(subtotal.toFixed(2)),
+        gst_amount: parseFloat(gst_amount.toFixed(2)),
+        total_amount: parseFloat(total_amount.toFixed(2)),
+        delivery_address: formData.delivery_address.trim(),
+        payment_mode: formData.payment_mode,
+        preferred_delivery_date: formData.preferred_delivery_date || null,
+        notes: formData.notes || "",
+        payment_status: 'pending'
+      };
+
+      console.log('📤 Sending order data:', JSON.stringify(orderData, null, 2));
+      console.log('🔍 Manufacturer ID:', selectedManufacturer.id);
+      console.log('🔍 Wholesaler ID:', userData.id);
+
+      const response = await axios.post(`${API_BASE_URL}/orders/multi`, orderData, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      console.log('✅ Order response:', response.data);
+      
+      if (response.data.success) {
+        alert(`✅ Order placed successfully! Order ID: ${response.data.order.order_id}`);
+        clearCart();
+        navigate('/wholesaler/orders');
+      } else {
+        throw new Error(response.data.message || 'Order failed');
+      }
+
+    } catch (error) {
+      console.error('❌ Order submission error:', error);
+      console.error('❌ Error details:', error.response?.data || error.message);
+      console.error('❌ Error status:', error.response?.status);
+      
+      let errorMessage = 'Failed to place order. ';
+      if (error.response?.data?.message) {
+        errorMessage += error.response.data.message;
+      } else if (error.message) {
+        errorMessage += error.message;
+      } else {
+        errorMessage += 'Please check your connection and try again.';
+      }
+      
+      alert(`❌ ${errorMessage}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Calculate min date (today) and default date (3 days from now)
+  const today = new Date().toISOString().split('T')[0];
+  const threeDaysFromNow = getDefaultDeliveryDate();
+
   return (
-    <div className="min-h-full">
-      {/* Header */}
-      <div className="mb-8">
-        <p className="text-gray-400 text-center mt-2">
-          Complete the order form below
-        </p>
-      </div>
+    <div className="max-w-6xl mx-auto">
+      <h1 className="text-3xl font-bold text-white mb-8">Order Summary</h1>
 
-      {/* Success Message */}
-      {success && (
-        <div className="bg-green-500/20 border border-green-500/50 rounded-lg p-4 mb-6 text-green-300">
-          ✅ {success}
-        </div>
-      )}
-
-      {/* Error Message */}
-      {error && (
-        <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 mb-6 text-red-300">
-          ❌ {error}
-        </div>
-      )}
-
-      <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Order Form */}
-        <div className="lg:col-span-2">
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-purple-400" />
-              Order Information
-            </h2>
-
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Order Form - Left Column */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Order Information Card */}
+          <div className="bg-gray-800 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-6">Order Information</h2>
+            
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Auto-generated Information Section */}
-              <div className="bg-gray-700/50 rounded-lg p-4 mb-6">
-                <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-                  <Hash className="w-4 h-4 text-purple-400" />
-                  Order Details (Auto-generated)
-                </h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-400 flex items-center gap-2">
-                      <Hash className="w-3 h-3" />
-                      Order ID:
-                    </span>
-                    <p className="text-white font-mono font-medium">{orderId}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400 flex items-center gap-2">
-                      <User className="w-3 h-3" />
-                      Manufacturer ID:
-                    </span>
-                    <p className="text-white font-medium">{manufacturer.id}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400 flex items-center gap-2">
-                      <User className="w-3 h-3" />
-                      Wholesaler ID:
-                    </span>
-                    <p className="text-white font-medium">{wholesalerInfo?.id || 'Loading...'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400 flex items-center gap-2">
-                      <Box className="w-3 h-3" />
-                      Product ID:
-                    </span>
-                    <p className="text-white font-medium">{product.id}</p>
+              {/* Auto-generated Fields */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="block text-gray-400 text-sm mb-2">Order ID</label>
+                  <div className="bg-gray-700 text-white p-3 rounded-lg font-mono">
+                    {orderId}
                   </div>
                 </div>
-              </div>
-
-              {/* Product Information */}
-              <div className="bg-gray-700/50 rounded-lg p-4">
-                <h3 className="font-semibold text-white mb-2">Product Details</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-400">Product Name:</span>
-                    <p className="text-white font-medium">{product.name}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Manufacturer:</span>
-                    <p className="text-white font-medium">{manufacturer.businessName}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Available Stock:</span>
-                    <p className="text-white font-medium">{product.stock_qty} units</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Unit Price:</span>
-                    <p className="text-green-400 font-bold">${parseFloat(product.unit_price).toFixed(2)}</p>
+                <div>
+                  <label className="block text-gray-400 text-sm mb-2">Manufacturer ID</label>
+                  <div className="bg-gray-700 text-white p-3 rounded-lg">
+                    {selectedManufacturer?.id || "Auto"}
                   </div>
                 </div>
-              </div>
-
-              {/* Quantity Required */}
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  <Package className="w-4 h-4 inline mr-2" />
-                  Quantity Required *
-                </label>
-                <input
-                  type="number"
-                  name="quantity"
-                  value={formData.quantity}
-                  onChange={handleInputChange}
-                  min="1"
-                  max={product.stock_qty}
-                  required
-                  className="w-full border border-gray-600 bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  Maximum available: {product.stock_qty} units
-                </p>
-              </div>
-
-              {/* Price Information (Auto-calculated) */}
-              <div className="bg-purple-500/10 rounded-lg p-4 border border-purple-500/20">
-                <h3 className="font-semibold text-white mb-3 flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-purple-400" />
-                  Price Details (Auto-calculated)
-                </h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-400">Unit Price:</span>
-                    <p className="text-white">${orderDetails.unitPrice}</p>
+                <div>
+                  <label className="block text-gray-400 text-sm mb-2">Wholesaler ID</label>
+                  <div className="bg-gray-700 text-white p-3 rounded-lg">
+                    {JSON.parse(localStorage.getItem('userData') || '{}').id || "Auto"}
                   </div>
-                  <div>
-                    <span className="text-gray-400">Quantity:</span>
-                    <p className="text-white">{orderDetails.quantity}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Subtotal:</span>
-                    <p className="text-white">${orderDetails.subtotal}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">GST (18%):</span>
-                    <p className="text-yellow-400">${orderDetails.gstAmount}</p>
-                  </div>
-                  <div className="col-span-2 pt-2 border-t border-purple-500/20">
-                    <span className="text-gray-400 font-semibold">Total Amount:</span>
-                    <p className="text-green-400 font-bold text-lg">${orderDetails.totalAmount}</p>
+                </div>
+                <div>
+                  <label className="block text-gray-400 text-sm mb-2">Delivery Date</label>
+                  <div className="bg-gray-700 text-white p-3 rounded-lg">
+                    {formData.preferred_delivery_date || threeDaysFromNow}
                   </div>
                 </div>
               </div>
 
               {/* Delivery Address */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  <Home className="w-4 h-4 inline mr-2" />
-                  Delivery Address (Wholesaler's Warehouse) *
-                </label>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-gray-300 font-medium">
+                    Delivery Address *
+                  </label>
+                  {wholesalerInfo?.warehouseAddress && (
+                    <span className="text-xs text-purple-400">
+                      Auto-filled from your warehouse address
+                    </span>
+                  )}
+                </div>
                 <textarea
-                  name="delivery_address"
                   value={formData.delivery_address}
-                  onChange={handleInputChange}
+                  onChange={e => setFormData({...formData, delivery_address: e.target.value})}
                   required
                   rows="3"
-                  placeholder="Enter your warehouse delivery address..."
-                  className="w-full border border-gray-600 bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white"
+                  placeholder="Enter warehouse address for delivery"
                 />
               </div>
 
               {/* Payment Mode */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  <CreditCard className="w-4 h-4 inline mr-2" />
+                <label className="block text-gray-300 font-medium mb-2">
                   Payment Mode *
                 </label>
-                <div className="grid grid-cols-3 gap-4">
-                  {["online", "cash", "credit"].map((mode) => (
-                    <label
-                      key={mode}
-                      className={cn(
-                        "border-2 rounded-lg p-4 text-center cursor-pointer transition-all",
-                        formData.payment_mode === mode
-                          ? "border-purple-500 bg-purple-500/20"
-                          : "border-gray-600 bg-gray-700 hover:border-gray-500"
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="payment_mode"
-                        value={mode}
-                        checked={formData.payment_mode === mode}
-                        onChange={handleInputChange}
-                        className="hidden"
-                      />
-                      <span className="text-white font-medium capitalize">
-                        {mode}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                <select
+                  value={formData.payment_mode}
+                  onChange={e => setFormData({...formData, payment_mode: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white"
+                >
+                  <option value="online">Online Payment</option>
+                  <option value="cash">Cash on Delivery</option>
+                  <option value="credit">Credit Terms</option>
+                </select>
               </div>
-{/* Preferred Delivery Date */}
-<div>
-  <label className="block text-sm font-medium text-gray-300 mb-2">
-    <Calendar className="w-4 h-4 inline mr-2" />
-    Preferred Delivery Date
-  </label>
-  <input
-    type="date"
-    name="preferred_delivery_date"
-    value={formData.preferred_delivery_date}
-    onChange={handleInputChange}
-    min={getMinDeliveryDate()}
-    className="w-full border border-gray-600 bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-  />
-  <p className="text-xs text-gray-400 mt-1">
-    Automatically set to 5 days from today for standard delivery
-  </p>
-</div>
+
+              {/* Delivery Date */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-gray-300 font-medium">
+                    Preferred Delivery Date *
+                  </label>
+                  <span className="text-xs text-green-400">
+                    Default: 3 days from today
+                  </span>
+                </div>
+                <input
+                  type="date"
+                  value={formData.preferred_delivery_date}
+                  onChange={e => setFormData({...formData, preferred_delivery_date: e.target.value})}
+                  min={today}
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white"
+                />
+                <p className="text-gray-400 text-xs mt-1">
+                  Minimum delivery date is today. Default is 3 days from now for processing.
+                </p>
+              </div>
+
+              {/* GST Percentage (Editable) */}
+              <div>
+                <label className="block text-gray-300 font-medium mb-2">
+                  GST Percentage *
+                </label>
+                {!isEditingGST ? (
+                  <div
+                    className="w-full bg-gray-700 text-white p-3 rounded-lg cursor-pointer border border-gray-600 hover:border-purple-500 transition-colors"
+                    onDoubleClick={() => setIsEditingGST(true)}
+                    title="Double click to edit GST percentage"
+                  >
+                    {gstPercent}% (Double click to edit)
+                  </div>
+                ) : (
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={gstPercent}
+                    onChange={(e) => setGstPercent(Number(e.target.value))}
+                    onBlur={() => setIsEditingGST(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setIsEditingGST(false);
+                    }}
+                    className="w-full bg-gray-700 border border-purple-500 rounded-lg p-3 text-white"
+                    autoFocus
+                  />
+                )}
+                <p className="text-gray-400 text-xs mt-1">
+                  Double click the GST field to edit. Default is 18%
+                </p>
+              </div>
+
               {/* Notes */}
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
+                <label className="block text-gray-300 font-medium mb-2">
                   Additional Notes (Optional)
                 </label>
                 <textarea
-                  name="notes"
                   value={formData.notes}
-                  onChange={handleInputChange}
+                  onChange={e => setFormData({...formData, notes: e.target.value})}
                   rows="3"
-                  placeholder="Any special instructions or notes for the manufacturer..."
-                  className="w-full border border-gray-600 bg-gray-700 text-white rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white"
+                  placeholder="Any special instructions, delivery time preferences, etc..."
                 />
               </div>
 
@@ -714,22 +1437,19 @@ if (response.data.success) {
               <button
                 type="submit"
                 disabled={loading}
-                className={cn(
-                  "w-full py-4 px-6 rounded-lg font-semibold text-lg transition-all flex items-center justify-center gap-2",
-                  loading
-                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                    : "bg-purple-600 hover:bg-purple-700 text-white"
-                )}
+                className={`w-full py-3 rounded-lg font-bold text-lg transition-all ${
+                  loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                } text-white flex items-center justify-center gap-2`}
               >
                 {loading ? (
                   <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    Placing Order...
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Processing Order...
                   </>
                 ) : (
                   <>
-                    <Send className="w-5 h-5" />
-                    Place Order & Notify Manufacturer
+                    <Check size={20} />
+                    Place Order ({cart.length} items)
                   </>
                 )}
               </button>
@@ -737,91 +1457,127 @@ if (response.data.success) {
           </div>
         </div>
 
-        {/* Order Summary */}
+        {/* Order Details - Right Column */}
         <div className="lg:col-span-1">
-          <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 sticky top-8">
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-green-400" />
-              Order Summary
-            </h2>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">Order ID:</span>
-                <span className="text-white font-mono text-sm">{orderId}</span>
+          {/* Manufacturer Info */}
+          <div className="bg-gray-800 rounded-xl p-6 mb-6">
+            <h3 className="text-white font-bold mb-4">Manufacturer Information</h3>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-purple-600 rounded-full flex items-center justify-center">
+                <Building size={24} className="text-white" />
               </div>
-
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">Product:</span>
-                <span className="text-white text-right text-sm">{product.name}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">Manufacturer:</span>
-                <span className="text-white text-right text-sm">{manufacturer.businessName}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-2 border-b border-gray-700 pb-4">
-                <span className="text-gray-400">Quantity:</span>
-                <span className="text-white">{orderDetails.quantity}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">Unit Price:</span>
-                <span className="text-white">${orderDetails.unitPrice}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">Subtotal:</span>
-                <span className="text-white">${orderDetails.subtotal}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-2">
-                <span className="text-gray-400">GST (18%):</span>
-                <span className="text-yellow-400">${orderDetails.gstAmount}</span>
-              </div>
-
-              <div className="flex justify-between items-center py-4 border-t border-gray-700 pt-4">
-                <span className="text-lg font-bold text-white">Total Amount:</span>
-                <span className="text-2xl font-bold text-green-400">
-                  ${orderDetails.totalAmount}
-                </span>
+              <div>
+                <p className="text-white font-medium">{selectedManufacturer?.businessName}</p>
+                <p className="text-gray-400 text-sm">
+                  {selectedManufacturer?.state}, {selectedManufacturer?.country}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">
+                  ID: {selectedManufacturer?.id}
+                </p>
               </div>
             </div>
+          </div>
 
-{/* Order Status */}
-<div className="mt-6 pt-6 border-t border-gray-700">
-  <h3 className="font-semibold text-white mb-3">Order Status</h3>
-  <div className="space-y-2 text-sm">
-    <div className="flex justify-between">
-      <span className="text-gray-400">Payment Mode:</span>
-      <span className="text-white capitalize">{formData.payment_mode}</span>
-    </div>
-    <div className="flex justify-between">
-      <span className="text-gray-400">Status:</span>
-      <span className="text-yellow-400 font-medium">⏳ Pending Approval</span>
-    </div>
-    {formData.preferred_delivery_date && (
-      <div className="flex justify-between">
-        <span className="text-gray-400">Preferred Delivery:</span>
-        <span className="text-white text-sm">
-          {new Date(formData.preferred_delivery_date).toLocaleDateString()}
-        </span>
-      </div>
-    )}
-  </div>
-</div>
+          {/* Wholesaler Info */}
+          {wholesalerInfo && (
+            <div className="bg-gray-800 rounded-xl p-6 mb-6">
+              <h3 className="text-white font-bold mb-4">Your Information</h3>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center">
+                  <User size={24} className="text-white" />
+                </div>
+                <div>
+                  <p className="text-white font-medium">{wholesalerInfo.businessName}</p>
+                  <p className="text-gray-400 text-sm">
+                    {wholesalerInfo.state}, {wholesalerInfo.country}
+                  </p>
+                  <p className="text-gray-500 text-xs mt-1">
+                    ID: {wholesalerInfo.id}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
-{/* Manufacturer Notification */}
-<div className="mt-6 pt-6 border-t border-gray-700">
-  <div className="bg-yellow-500/10 rounded-lg p-3 border border-yellow-500/20">
-    <h4 className="font-semibold text-yellow-400 text-sm mb-1">Awaiting Manufacturer Approval</h4>
-    <p className="text-yellow-300 text-xs">
-      Your order is pending approval from the manufacturer. 
-      You'll receive an email with the invoice once approved.
-    </p>
-  </div>
-</div>
+          {/* Delivery Info Card */}
+          <div className="bg-gray-800 rounded-xl p-6 mb-6">
+            <h3 className="text-white font-bold mb-4">Delivery Information</h3>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-500/20 rounded-full flex items-center justify-center">
+                  <Calendar size={18} className="text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-gray-300 text-sm">Preferred Delivery Date</p>
+                  <p className="text-white font-medium">
+                    {formData.preferred_delivery_date || threeDaysFromNow}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                  <Truck size={18} className="text-green-400" />
+                </div>
+                <div>
+                  <p className="text-gray-300 text-sm">Estimated Arrival</p>
+                  <p className="text-white font-medium">
+                    {formData.preferred_delivery_date 
+                      ? `On or before ${formData.preferred_delivery_date}`
+                      : `Within 3-5 business days`}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Order Items */}
+          <div className="bg-gray-800 rounded-xl p-6 mb-6">
+            <h3 className="text-white font-bold mb-4">Order Items ({cart.length})</h3>
+            <div className="space-y-4">
+              {cart.map(item => (
+                <div key={item.cartId} className="flex justify-between items-center py-3 border-b border-gray-700">
+                  <div className="flex-1">
+                    <p className="text-white font-medium">{item.name}</p>
+                    <div className="text-gray-400 text-sm">
+                      Qty: {item.quantity} × ${item.unit_price.toFixed(2)}
+                    </div>
+                    <div className="text-gray-500 text-xs mt-1">
+                      Product ID: {item.id}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-white font-medium">
+                      ${((item.unit_price || 0) * item.quantity).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Price Summary */}
+          <div className="bg-gray-800 rounded-xl p-6">
+            <h3 className="text-white font-bold mb-4">Price Summary</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Subtotal</span>
+                <span className="text-white">${totals.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">GST ({gstPercent}%)</span>
+                <span className="text-yellow-400">
+                  ${(totals.subtotal * (gstPercent / 100)).toFixed(2)}
+                </span>
+              </div>
+              <div className="pt-3 border-t border-gray-700">
+                <div className="flex justify-between">
+                  <span className="text-white font-bold text-lg">Total</span>
+                  <span className="text-green-400 font-bold text-xl">
+                    ${(totals.subtotal + (totals.subtotal * (gstPercent / 100))).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -829,161 +1585,303 @@ if (response.data.success) {
   );
 };
 
+// RealTimeNotifications Component
+const RealTimeNotifications = ({ socket }) => {
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  useEffect(() => {
+    if (socket) {
+      socket.on('orderUpdate', (data) => {
+        addNotification({
+          type: 'order',
+          title: `Order ${data.status}`,
+          message: data.message || `Order ${data.orderId} is now ${data.status}`,
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      socket.on('invoiceNotification', (data) => {
+        addNotification({
+          type: 'invoice',
+          title: 'Invoice Created',
+          message: `Invoice #${data.invoiceNumber} for $${data.amount}`,
+          timestamp: new Date().toISOString()
+        });
+      });
+    }
+
+    return () => {
+      if (socket) {
+        socket.off('orderUpdate');
+        socket.off('invoiceNotification');
+      }
+    };
+  }, [socket]);
+
+  const addNotification = (notification) => {
+    setNotifications(prev => [notification, ...prev.slice(0, 9)]);
+  };
+
+  const clearNotifications = () => {
+    setNotifications([]);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowNotifications(!showNotifications)}
+        className="relative p-2 rounded-lg bg-gray-800 hover:bg-gray-700"
+      >
+        <Bell size={20} />
+        {notifications.length > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+            {notifications.length}
+          </span>
+        )}
+      </button>
+
+      {showNotifications && (
+        <div className="absolute right-0 mt-2 w-80 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+          <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+            <h3 className="font-semibold text-white">Notifications</h3>
+            {notifications.length > 0 && (
+              <button
+                onClick={clearNotifications}
+                className="text-sm text-gray-400 hover:text-white"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
+          
+          <div className="max-h-96 overflow-y-auto">
+            {notifications.length === 0 ? (
+              <div className="p-4 text-center text-gray-400">
+                No notifications
+              </div>
+            ) : (
+              notifications.map((notif, index) => (
+                <div
+                  key={index}
+                  className={`p-4 border-b border-gray-700 ${
+                    notif.type === 'order' ? 'bg-gray-800/50' : 'bg-purple-900/10'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      notif.type === 'order' ? 'bg-blue-500/20' : 'bg-purple-500/20'
+                    }`}>
+                      {notif.type === 'order' ? (
+                        <Package size={16} className="text-blue-400" />
+                      ) : (
+                        <FileText size={16} className="text-purple-400" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-white">{notif.title}</h4>
+                      <p className="text-gray-300 text-sm mt-1">{notif.message}</p>
+                      <p className="text-gray-500 text-xs mt-2">
+                        {new Date(notif.timestamp).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main WholesalerCatalog Component
 const WholesalerCatalog = () => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [manufacturers, setManufacturers] = useState([]);
-  const [selectedManufacturer, setSelectedManufacturer] = useState(null);
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [view, setView] = useState("manufacturers"); // "manufacturers", "products", "product-details", "order-form"
-  const [apiError, setApiError] = useState("");
-  const navigate = useNavigate();
+  const [view, setView] = useState("manufacturers");
+  const [showCart, setShowCart] = useState(false);
+  const [showProductDetails, setShowProductDetails] = useState(false);
 
-  // Fetch all verified manufacturers - FIXED API CALL
+  const socketRef = useRef(null);
+  const [socketConnected, setSocketConnected] = useState(false);
+  
+  const { 
+    cart, 
+    selectedManufacturer, 
+    setSelectedManufacturer,
+    clearCart,
+    getCartTotals 
+  } = useCart();
+
+  // In WholesalerCatalog.jsx - Fix the socket initialization
+  useEffect(() => {
+    if (socketRef.current) return;
+    
+    console.log('🔌 Initializing Socket.IO connection...');
+    
+    const userData = JSON.parse(localStorage.getItem('userData') || '{}');
+    if (!userData.id) {
+      console.log('⚠️ No user data found, skipping socket connection');
+      return;
+    }
+    
+    const socket = io('http://localhost:8080', {
+      transports: ['websocket', 'polling'],
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
+    });
+    
+    socketRef.current = socket;
+    
+    socket.on('connect', () => {
+      console.log('✅ Connected to Socket.IO server');
+      setSocketConnected(true);
+      
+      // Join room based on user role
+      if (userData.role === 'wholesaler') {
+        socket.emit('join-wholesaler', userData.id);
+        console.log(`👤 Joined wholesaler room: ${userData.id}`);
+      }
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('❌ Socket.IO connection error:', error);
+      setSocketConnected(false);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('🔌 Disconnected from Socket.IO server');
+      setSocketConnected(false);
+    });
+
+    socket.on('newOrder', (data) => {
+      console.log('📦 New order notification received:', data);
+      // Show notification in UI
+      alert(`📦 New Order: Order ${data.orderId} received from wholesaler`);
+    });
+
+    socket.on('orderUpdate', (data) => {
+      console.log('🔄 Order update received:', data);
+      // Show notification in UI
+      alert(`🔄 Order Update: Order ${data.orderId} is now ${data.status}`);
+    });
+
+    // Test event handler
+    socket.on('test', (data) => {
+      console.log('🧪 Test event from server:', data);
+    });
+
+    return () => {
+      if (socketRef.current) {
+        console.log('🧹 Cleaning up socket connection');
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []);
+
+  // Fetch manufacturers
   const fetchManufacturers = async () => {
     try {
       setLoading(true);
-      setApiError("");
-      console.log("Fetching manufacturers from:", `${API_BASE_URL}/companies`);
-      
       const res = await axios.get(`${API_BASE_URL}/companies`);
       if (res.data && Array.isArray(res.data)) {
         setManufacturers(res.data);
-      } else {
-        console.error("Invalid response format:", res.data);
-        setManufacturers([]);
       }
     } catch (error) {
       console.error("Error fetching manufacturers:", error);
-      setApiError("Failed to load manufacturers. Using demo data.");
-      // Demo data as fallback
-      setManufacturers([
-        {
-          id: 1,
-          businessName: "PharmaCorp Ltd",
-          state: "California",
-          country: "USA",
-          panGstNumber: "GST123456789"
-        },
-        {
-          id: 2,
-          businessName: "MediLife Solutions",
-          state: "Texas",
-          country: "USA", 
-          panGstNumber: "GST987654321"
-        }
-      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch products for a specific manufacturer - FIXED API CALL
-  const fetchManufacturerProducts = async (companyName) => {
-    try {
-      setLoading(true);
-      console.log("Fetching products for company:", companyName);
-      const res = await axios.get(`${API_BASE_URL}/medicines/company/${encodeURIComponent(companyName)}`);
-      if (res.data && Array.isArray(res.data)) {
-        setProducts(res.data);
-      } else {
-        setProducts([]);
-      }
-      setView("products");
-    } catch (error) {
-      console.error("Error fetching manufacturer products:", error);
-      // Demo products as fallback
-      setProducts([
-        {
-          id: 1,
-          name: "Paracetamol 500mg",
-          description: "Pain reliever and fever reducer",
-          unit_price: "15.99",
-          stock_qty: 100,
-          image: null,
-          sku: "PARA500",
-          expiry_date: "2025-12-31",
-          category: "Pain Relief"
-        },
-        {
-          id: 2, 
-          name: "Vitamin C 1000mg",
-          description: "Immune system support",
-          unit_price: "25.50",
-          stock_qty: 50,
-          image: null,
-          sku: "VITC1000",
-          expiry_date: "2025-06-30",
-          category: "Vitamins"
-        }
-      ]);
-      setView("products");
-    } finally {
-      setLoading(false);
+  // Fetch products for manufacturer
+// Fetch products for manufacturer - WITH DEBUGGING
+const fetchManufacturerProducts = async (companyName) => {
+  try {
+    setLoading(true);
+    console.log(`📡 Fetching products for company: ${companyName}`);
+    
+    const res = await axios.get(`${API_BASE_URL}/medicines/company/${encodeURIComponent(companyName)}`);
+    
+    console.log('📦 Full API Response:', res);
+    console.log('📦 Response data:', res.data);
+    console.log('📦 Is array?', Array.isArray(res.data));
+    
+    if (res.data && Array.isArray(res.data)) {
+      console.log(`✅ Received ${res.data.length} products`);
+      
+      // Check first few products
+      res.data.slice(0, 3).forEach((product, i) => {
+        console.log(`   Product ${i+1}:`, {
+          id: product.id,
+          name: product.name,
+          stock_qty: product.stock_qty,
+          price: product.unit_price
+        });
+      });
+      
+      setProducts(res.data);
+    } else {
+      console.warn('⚠️ Response is not an array');
+      setProducts([]);
     }
-  };
-
-  // Handle manufacturer card click
+    
+    setView("products");
+  } catch (error) {
+    console.error("❌ Error fetching products:", error);
+    console.error("❌ Error response:", error.response?.data);
+    setProducts([]);
+    setView("products");
+  } finally {
+    setLoading(false);
+  }
+};
+  // Handle manufacturer selection
   const handleManufacturerClick = (manufacturer) => {
     setSelectedManufacturer(manufacturer);
     fetchManufacturerProducts(manufacturer.businessName);
   };
 
-  // Handle product image click
-  const handleProductDetailsClick = (product) => {
+  // Handle view product details
+  const handleViewDetails = (product) => {
     setSelectedProduct(product);
-    setView("product-details");
+    setShowProductDetails(true);
   };
 
-  // Handle back to manufacturers list
-  const handleBackToManufacturers = () => {
-    setSelectedManufacturer(null);
-    setProducts([]);
-    setView("manufacturers");
-  };
-
-  // Handle back to products list
-  const handleBackToProducts = () => {
-    setSelectedProduct(null);
-    setView("products");
-  };
-
-  // Handle place order click
-  const handlePlaceOrder = (product) => {
-    setSelectedProduct(product);
-    setView("order-form");
+  // Handle place order from cart
+  const handlePlaceOrder = () => {
+    if (cart.length === 0) {
+      alert("Your cart is empty!");
+      return;
+    }
+    setShowCart(false);
+    setView("order-summary");
   };
 
   // Handle order success
   const handleOrderSuccess = () => {
-    // Redirect to orders page
+    clearCart();
     navigate('/wholesaler/orders');
   };
 
-  // Filter manufacturers based on search
-  const filteredManufacturers = manufacturers.filter(manufacturer => {
-    if (!manufacturer) return false;
-    
-    const searchLower = searchTerm.toLowerCase();
-    const businessName = manufacturer.businessName || '';
-    const state = manufacturer.state || '';
-    const country = manufacturer.country || '';
-    const panGst = manufacturer.panGstNumber || '';
-    
-    return (
-      businessName.toLowerCase().includes(searchLower) ||
-      state.toLowerCase().includes(searchLower) ||
-      country.toLowerCase().includes(searchLower) ||
-      panGst.toLowerCase().includes(searchLower)
-    );
-  });
-
-  // Load manufacturers on component mount
   useEffect(() => {
     fetchManufacturers();
   }, []);
+
+  const filteredManufacturers = manufacturers.filter(manufacturer =>
+    manufacturer.businessName?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const totals = getCartTotals();
 
   return (
     <div className="flex h-screen bg-gray-900 text-white">
@@ -991,33 +1889,48 @@ const WholesalerCatalog = () => {
       
       <main className="flex-1 overflow-auto">
         <div className="p-8 bg-gray-900 min-h-full">
-          {/* Header Section */}
+          {/* Header */}
           <div className="mb-8">
             {view === "manufacturers" && (
               <>
-                <h1 className="text-3xl font-bold text-center mb-2 text-white">
-                  🏭 Manufacturer Directory
-                </h1>
-                <p className="text-gray-400 text-center mb-6">
-                  Browse verified pharmaceutical manufacturers and their product catalogs
-                </p>
-                
-                {/* API Error Message */}
-                {apiError && (
-                  <div className="bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-4 mb-4 text-yellow-300 text-center">
-                    ⚠️ {apiError}
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h1 className="text-3xl font-bold text-white">
+                      🏭 Manufacturer Directory
+                    </h1>
+                    <p className="text-gray-400 mt-1">
+                      Select a manufacturer to view and order medicines
+                    </p>
                   </div>
-                )}
+                  
+                  <div className="flex items-center gap-4">
+                    {/* Notifications */}
+                    <RealTimeNotifications socket={socketRef.current} />
+                    {/* Cart Button */}
+                    <button
+                      onClick={() => setShowCart(true)}
+                      className="relative flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+                    >
+                      <ShoppingCart size={20} />
+                     
+                      {cart.length > 0 && (
+                        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                          {cart.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
                 
-                <div className="flex justify-center items-center space-x-4">
-                  <div className="relative">
+                <div className="flex justify-center mb-8">
+                  <div className="relative w-full max-w-xl">
                     <Search className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder="Search by company name, state, country, or PAN..."
+                      placeholder="Search manufacturers by name or location..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="border border-gray-600 bg-gray-800 text-white rounded-lg pl-10 pr-4 py-2 w-96 focus:ring-2 focus:ring-purple-500 focus:border-transparent placeholder-gray-400"
+                      className="border border-gray-600 bg-gray-800 text-white rounded-lg pl-10 pr-4 py-3 w-full focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     />
                   </div>
                 </div>
@@ -1027,293 +1940,169 @@ const WholesalerCatalog = () => {
             {view === "products" && (
               <div className="flex items-center justify-between">
                 <button
-                  onClick={handleBackToManufacturers}
-                  className="flex items-center gap-2 text-purple-400 hover:text-purple-300 transition-colors px-4 py-2 rounded-lg hover:bg-gray-800"
+                  onClick={() => {
+                    setSelectedManufacturer(null);
+                    setProducts([]);
+                    setView("manufacturers");
+                  }}
+                  className="flex items-center gap-2 text-purple-400 hover:text-purple-300"
                 >
                   <ArrowLeft size={20} />
                   Back to Manufacturers
                 </button>
-                <h1 className="text-2xl font-bold text-white text-center flex-1">
-                  {selectedManufacturer?.businessName}'s Products
-                </h1>
-                <div className="w-6"></div>
+                
+                <div>
+                  <h1 className="text-2xl font-bold text-white">
+                    {selectedManufacturer?.businessName}'s Products
+                  </h1>
+                  <p className="text-gray-400 text-sm">
+                    {products.length} products available
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => setShowCart(true)}
+                    className="relative flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg"
+                  >
+                    <ShoppingCart size={18} />
+              
+                    {cart.length > 0 && (
+                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {cart.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
 
-            {view === "product-details" && (
-              <div className="flex items-center justify-between">
+            {view === "order-summary" && (
+              <div className="flex items-center gap-4">
                 <button
-                  onClick={handleBackToProducts}
-                  className="flex items-center gap-2 text-purple-400 hover:text-purple-300 transition-colors px-4 py-2 rounded-lg hover:bg-gray-800"
+                  onClick={() => setView("products")}
+                  className="flex items-center gap-2 text-purple-400 hover:text-purple-300"
                 >
                   <ArrowLeft size={20} />
                   Back to Products
                 </button>
-                <h1 className="text-2xl font-bold text-white text-center flex-1">
-                  Product Details
+                <h1 className="text-2xl font-bold text-white">
+                  Order Summary ({cart.length} items)
                 </h1>
-                <div className="w-6"></div>
-              </div>
-            )}
-
-            {view === "order-form" && (
-              <div className="flex items-center justify-between">
-                <button
-                  onClick={() => setView("product-details")}
-                  className="flex items-center gap-2 text-purple-400 hover:text-purple-300 transition-colors px-4 py-2 rounded-lg hover:bg-gray-800"
-                >
-                  <ArrowLeft size={20} />
-                  Back to Product
-                </button>
-                <h1 className="text-3xl font-bold text-white text-center flex-1">
-                  Place Order
-                </h1>
-                <div className="w-6"></div>
               </div>
             )}
           </div>
 
+          {/* Loading State */}
           {loading && (
-            <div className="text-center text-gray-400 mb-4">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
-              <p className="mt-2">
-                {view === "manufacturers" ? "Loading manufacturers..." : 
-                 view === "products" ? "Loading products..." : 
-                 view === "product-details" ? "Loading product details..." : 
-                 "Processing..."}
-              </p>
+            <div className="text-center py-12">
+              <div className="w-8 h-8 border-3 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-gray-400">Loading...</p>
             </div>
           )}
 
-          {/* Manufacturers Grid View */}
-          {view === "manufacturers" && (
+          {/* Manufacturers View */}
+          {!loading && view === "manufacturers" && (
             <>
               {filteredManufacturers.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {filteredManufacturers.map((manufacturer, index) => (
+                  {filteredManufacturers.map((manufacturer) => (
                     <div
-                      key={manufacturer.id || index}
+                      key={manufacturer.id}
                       onClick={() => handleManufacturerClick(manufacturer)}
                       className="bg-gray-800 shadow-lg rounded-xl p-6 border border-gray-700 hover:border-purple-500 hover:shadow-xl transition-all duration-300 cursor-pointer group"
                     >
-                      {/* Company Icon */}
-                      <div className="flex items-center justify-center w-16 h-16 bg-purple-600 rounded-lg mb-4 mx-auto group-hover:bg-purple-700 transition-colors">
+                      <div className="flex items-center justify-center w-16 h-16 bg-purple-600 rounded-lg mb-4 mx-auto group-hover:bg-purple-700">
                         <Building className="w-8 h-8 text-white" />
                       </div>
-
-                      {/* Company Name */}
-                      <h2 className="text-xl font-semibold text-white text-center mb-3 line-clamp-2">
+                      <h2 className="text-xl font-semibold text-white text-center mb-3">
                         {manufacturer.businessName}
                       </h2>
-                      
-                      <div className="space-y-3">
-                        {/* Location */}
-                        <div className="flex items-center gap-2 text-gray-300 justify-center">
-                          <MapPin size={16} className="text-purple-400" />
-                          <span className="text-sm">
-                            {manufacturer.state}, {manufacturer.country}
-                          </span>
-                        </div>
-
-                        {/* PAN/GST Number */}
-                        {manufacturer.panGstNumber && (
-                          <div className="text-center">
-                            <span className="text-xs text-gray-400 bg-gray-700 px-2 py-1 rounded">
-                              PAN: {manufacturer.panGstNumber}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Action Button */}
-                        <div className="pt-3 border-t border-gray-700">
-                          <div className="flex justify-between items-center text-xs">
-                            <span className="text-green-400 font-medium">Verified</span>
-                            <span className="text-purple-400 group-hover:text-purple-300 transition-colors">
-                              View Products →
-                            </span>
-                          </div>
-                        </div>
+                      <div className="flex items-center gap-2 text-gray-300 justify-center">
+                        <MapPin size={16} className="text-purple-400" />
+                        <span className="text-sm">
+                          {manufacturer.state}, {manufacturer.country}
+                        </span>
+                      </div>
+                      <div className="pt-3 border-t border-gray-700 mt-4">
+                        <span className="text-purple-400 text-sm">
+                          View Products →
+                        </span>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                !loading && (
-                  <div className="text-center text-gray-400 bg-gray-800 rounded-lg p-8 border border-gray-700">
-                    <div className="text-4xl mb-4">🏭</div>
-                    <p className="text-lg mb-2">
-                      {searchTerm ? "No manufacturers found matching your search" : "No verified manufacturers available"}
-                    </p>
-                    {searchTerm && (
-                      <button
-                        onClick={() => setSearchTerm("")}
-                        className="text-purple-400 hover:text-purple-300 mt-2"
-                      >
-                        Clear search
-                      </button>
-                    )}
-                  </div>
-                )
+                <div className="text-center text-gray-400 bg-gray-800 rounded-lg p-8">
+                  <div className="text-4xl mb-4">🏭</div>
+                  <p className="text-lg">No manufacturers found</p>
+                </div>
               )}
             </>
           )}
 
-          {/* Products Grid View */}
-          {view === "products" && (
+          {/* Products View */}
+          {!loading && view === "products" && (
             <>
               {products.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {products.map((product) => (
                     <ProductCard 
                       key={product.id} 
-                      product={product} 
-                      onViewDetails={handleProductDetailsClick}
+                      product={product}
+                      onViewDetails={handleViewDetails}
                     />
                   ))}
                 </div>
               ) : (
-                !loading && (
-                  <div className="text-center text-gray-400 bg-gray-800 rounded-lg p-8 border border-gray-700">
-                    <div className="text-4xl mb-4">📦</div>
-                    <p className="text-lg">
-                      No products available from {selectedManufacturer?.businessName}
-                    </p>
-                    <button
-                      onClick={handleBackToManufacturers}
-                      className="text-purple-400 hover:text-purple-300 mt-4"
-                    >
-                      Back to manufacturers
-                    </button>
-                  </div>
-                )
+                <div className="text-center text-gray-400 bg-gray-800 rounded-lg p-8">
+                  <div className="text-4xl mb-4">📦</div>
+                  <p className="text-lg">No products available</p>
+                </div>
               )}
             </>
           )}
 
-          {/* Product Details View */}
-          {view === "product-details" && selectedProduct && (
-            <div className="max-w-4xl mx-auto">
-              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 p-8">
-                  {/* Product Image */}
-                  <div className="flex justify-center">
-                    <div className="relative w-full max-w-md">
-                      {getImageUrl(selectedProduct.image) ? (
-                        <img
-                          src={getImageUrl(selectedProduct.image)}
-                          alt={selectedProduct.name}
-                          className="w-full h-80 object-cover rounded-lg"
-                        />
-                      ) : (
-                        <div className="w-full h-80 bg-gray-700 rounded-lg flex items-center justify-center">
-                          <div className="text-center text-gray-400">
-                            <div className="text-6xl mb-4">💊</div>
-                            <span className="text-lg">No Image Available</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Product Details */}
-                  <div className="space-y-6">
-                    <div>
-                      <h1 className="text-3xl font-bold text-white mb-2">
-                        {selectedProduct.name}
-                      </h1>
-                      {selectedProduct.description && (
-                        <p className="text-gray-300 text-lg">
-                          {selectedProduct.description}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center py-3 border-b border-gray-700">
-                        <span className="text-gray-400">Price:</span>
-                        <span className="text-2xl font-bold text-green-400">
-                          ${parseFloat(selectedProduct.unit_price || 0).toFixed(2)}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-3 border-b border-gray-700">
-                        <span className="text-gray-400">Available Stock:</span>
-                        <span className={`text-lg font-semibold ${
-                          selectedProduct.stock_qty > 0 ? 'text-green-400' : 'text-red-400'
-                        }`}>
-                          {selectedProduct.stock_qty || 0} units
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-3 border-b border-gray-700">
-                        <span className="text-gray-400">SKU/Batch:</span>
-                        <span className="text-white font-medium">
-                          {selectedProduct.sku || 'N/A'}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-3 border-b border-gray-700">
-                        <span className="text-gray-400">Expiry Date:</span>
-                        <span className="text-white font-medium">
-                          {selectedProduct.expiry_date ? 
-                            new Date(selectedProduct.expiry_date).toLocaleDateString() : 'N/A'
-                          }
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-center py-3 border-b border-gray-700">
-                        <span className="text-gray-400">Category:</span>
-                        <span className="text-white font-medium">
-                          {selectedProduct.category || 'N/A'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Place Order Button */}
-                    <button
-                      onClick={() => handlePlaceOrder(selectedProduct)}
-                      disabled={!selectedProduct.stock_qty || selectedProduct.stock_qty <= 0}
-                      className={`w-full py-3 px-6 rounded-lg font-semibold text-lg transition-all ${
-                        selectedProduct.stock_qty > 0
-                          ? 'bg-purple-600 hover:bg-purple-700 text-white'
-                          : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {selectedProduct.stock_qty > 0 ? '🛒 Place Order' : 'Out of Stock'}
-                    </button>
-
-                    {selectedProduct.stock_qty <= 0 && (
-                      <p className="text-red-400 text-center text-sm">
-                        This product is currently out of stock
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Order Form View */}
-          {view === "order-form" && selectedProduct && selectedManufacturer && (
-            
-            <OrderFormSection
-              product={selectedProduct}
-              manufacturer={selectedManufacturer}
-              onBack={() => setView("product-details")}
-              onOrderSuccess={handleOrderSuccess}
+          {/* Order Summary View */}
+          {!loading && view === "order-summary" && (
+            <OrderSummary
+              onBack={() => setView("products")}
+              onSubmit={handleOrderSuccess}
             />
           )}
 
-          {/* Stats Footer */}
-          {view === "manufacturers" && filteredManufacturers.length > 0 && (
-            <div className="mt-8 text-center text-gray-500 text-sm">
-              Showing {filteredManufacturers.length} verified manufacturer(s)
-            </div>
+          {/* Product Details Modal */}
+          {showProductDetails && selectedProduct && (
+            <ProductDetailsModal
+              product={selectedProduct}
+              onClose={() => {
+                setShowProductDetails(false);
+                setSelectedProduct(null);
+              }}
+              onAddToCart={() => {
+                setShowProductDetails(false);
+                setSelectedProduct(null);
+              }}
+            />
           )}
+
+          {/* Cart Sidebar */}
+          <CartSidebar
+            isOpen={showCart}
+            onClose={() => setShowCart(false)}
+            onPlaceOrder={handlePlaceOrder}
+          />
         </div>
       </main>
     </div>
   );
 };
 
-export default WholesalerCatalog;
+// Export the component wrapped with CartProvider
+export default function WholesalerCatalogWrapper() {
+  return (
+    <CartProvider>
+      <WholesalerCatalog />
+    </CartProvider>
+  );
+}

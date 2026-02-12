@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { LayoutDashboard, Package, ShoppingCart, Truck, BarChart3, Settings, LogOut, Edit, Save, X, Plus, Trash2, ClipboardList, FileText, Mail, Ship, Zap, Bell, Search, Menu } from "lucide-react";
+import { LayoutDashboard, Package, ShoppingCart, Truck, BarChart3, Settings, LogOut, Edit, Save, X, Plus, Trash2, ClipboardList, FileText, Mail, Ship, Zap, Bell, Search, Menu, AlertTriangle, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import logo from "../../assets/logo.png";
 import axios from "axios";
@@ -73,6 +73,14 @@ const useMedicines = () => {
     }
   };
 
+const updateLocalMedicine = (id, updates) => {
+  setMedicines(prev => prev.map(item => 
+    item.id === id ? { ...item, ...updates } : item
+  ));
+};
+
+
+
   const fetchMedicines = async () => {
     try {
       setLoading(true);
@@ -143,69 +151,93 @@ const useMedicines = () => {
     }
   };
 
-  const updateMedicine = async (id, medicineData) => {
-    try {
-      const updateData = {
-        sku: medicineData.sku?.trim() || "",
-        name: medicineData.name?.trim() || "",
-        description: medicineData.description?.trim() || "",
-        unit: medicineData.unit || "",
-        unit_price: medicineData.unit_price ? parseFloat(medicineData.unit_price) : 0,
-        tax_rate: medicineData.tax_rate ? parseFloat(medicineData.tax_rate) : 0,
-        mfg_date: formatDateForInput(medicineData.mfg_date) || new Date().toISOString().split('T')[0],
-        expiry_date: formatDateForInput(medicineData.expiry_date) || new Date(Date.now() + 31536000000).toISOString().split('T')[0],
-        category: medicineData.category || "health devices",
-        stock_qty: medicineData.stock_qty ? parseInt(medicineData.stock_qty) : 0,
-        status: "Stock",
-        user_email: getUserData()?.email || ""
-      };
-
-      let response;
-      
-      if (medicineData.image instanceof File) {
-        const formData = new FormData();
-        Object.entries(updateData).forEach(([key, value]) => {
-          formData.append(key, value.toString());
-        });
-        formData.append("image", medicineData.image);
-
-        response = await axios.put(
-          `${MEDICINES_API}/${id}`, 
-          formData,
-          {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-          }
-        );
-      } else {
-        const urlParams = new URLSearchParams();
-        Object.entries(updateData).forEach(([key, value]) => {
-          urlParams.append(key, value.toString());
-        });
-
-        response = await axios.put(
-          `${MEDICINES_API}/${id}`, 
-          urlParams,
-          {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-          }
-        );
-      }
-
-      const updatedMedicine = response.data;
-      setMedicines(prev => prev.map(item => 
-        item.id === id ? { ...item, ...updatedMedicine } : item
-      ));
-      
-      return updatedMedicine;
-    } catch (error) {
-      console.error("❌ Error updating medicine:", error);
-      throw error;
+const updateMedicine = async (id, medicineData) => {
+  try {
+    const user = getUserData();
+    if (!user?.email) {
+      throw new Error("User email not found");
     }
-  };
+
+    // Prepare update data
+    const updateData = {
+      sku: medicineData.sku?.trim() || "",
+      name: medicineData.name?.trim() || "",
+      description: medicineData.description?.trim() || "",
+      unit: medicineData.unit || "",
+      unit_price: medicineData.unit_price ? parseFloat(medicineData.unit_price) : 0,
+      tax_rate: medicineData.tax_rate ? parseFloat(medicineData.tax_rate) : 0,
+      mfg_date: formatDateForInput(medicineData.mfg_date) || new Date().toISOString().split('T')[0],
+      expiry_date: formatDateForInput(medicineData.expiry_date) || new Date(Date.now() + 31536000000).toISOString().split('T')[0],
+      category: medicineData.category || "health devices",
+      stock_qty: medicineData.stock_qty ? parseInt(medicineData.stock_qty) : 0,
+      status: "Stock",
+      user_email: user.email
+    };
+
+    console.log(`🔄 Updating medicine ${id} with data:`, updateData);
+
+    let response;
+    
+    if (medicineData.image instanceof File) {
+      // If there's a new image, use multipart/form-data
+      const formData = new FormData();
+      Object.entries(updateData).forEach(([key, value]) => {
+        formData.append(key, value.toString());
+      });
+      formData.append("image", medicineData.image);
+
+      response = await axios.put(
+        `${MEDICINES_API}/${id}`, 
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+    } else {
+      // If no image update, use application/json
+      response = await axios.put(
+        `${MEDICINES_API}/${id}`,
+        updateData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+    }
+
+    const updatedMedicine = response.data;
+    
+    // Check if response is successful
+    if (!response.data || response.status !== 200) {
+      throw new Error(`Update failed with status: ${response.status}`);
+    }
+
+    // Update local state
+    setMedicines(prev => prev.map(item => 
+      item.id === id ? { ...item, ...updatedMedicine } : item
+    ));
+    
+    return updatedMedicine;
+  } catch (error) {
+    console.error("❌ Error updating medicine:", error);
+    
+    // Log more details about the error
+    if (error.response) {
+      console.error("Response error details:", {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers
+      });
+    } else if (error.request) {
+      console.error("No response received:", error.request);
+    }
+    
+    throw error;
+  }
+};
 
   const deleteMedicine = async (id) => {
     try {
@@ -227,22 +259,29 @@ const useMedicines = () => {
       throw error;
     }
   };
-
-  const getMedicinesCount = () => medicines.length;
+ const getMedicinesCount = () => medicines.length;
 
   const getLowStockCount = () => medicines.filter(med => med.stock_qty < 100).length;
 
-  return {
-    medicines,
-    loading,
-    fetchMedicines,
-    addMedicine,
-    updateMedicine,
-    deleteMedicine,
-    deleteMultipleMedicines,
-    getMedicinesCount,
-    getLowStockCount,
+  const getTotalStockValue = () => {
+    return medicines.reduce((total, med) => {
+      return total + (med.unit_price * med.stock_qty);
+    }, 0);
   };
+ // Add updateLocalMedicine to the return statement
+return {
+  medicines,
+  loading,
+  fetchMedicines,
+  addMedicine,
+  updateMedicine,
+  deleteMedicine,
+  deleteMultipleMedicines,
+  getMedicinesCount,
+  getLowStockCount,
+  getTotalStockValue,
+  updateLocalMedicine // Add this
+};
 };
 
 const WholesalerInventory = () => {
@@ -260,9 +299,13 @@ const WholesalerInventory = () => {
   const [updatingRows, setUpdatingRows] = useState(new Set());
   const [isMobileView, setIsMobileView] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-
+  const [pendingImageUpdates, setPendingImageUpdates] = useState({});
   const { isMobileMenuOpen, setIsMobileMenuOpen } = useMobileMenu();
   const skuCounterRef = useRef(1);
+
+  // Add these stock filter state variables
+  const [showStockFilter, setShowStockFilter] = useState(false);
+  const [selectedStockFilter, setSelectedStockFilter] = useState('all'); // 'all', 'low', 'medium', 'high'
 
   const COMPANY_API = "http://localhost:8080/api/check-company";
 
@@ -276,7 +319,8 @@ const WholesalerInventory = () => {
     deleteMedicine,
     deleteMultipleMedicines,
     getMedicinesCount,
-    getLowStockCount
+    getLowStockCount,
+    updateLocalMedicine
   } = useMedicines();
 
   const navigate = useNavigate();
@@ -309,6 +353,18 @@ const WholesalerInventory = () => {
       skuCounterRef.current = maxSku + 1;
     }
   }, [inventoryData]);
+
+  // Add this effect to close the stock filter dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showStockFilter && !event.target.closest('.stock-filter-container')) {
+        setShowStockFilter(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showStockFilter]);
 
   const getImageUrl = (imagePath) => {
     if (!imagePath || imagePath === 'No image' || imagePath === 'NULL') return null;
@@ -424,31 +480,51 @@ const WholesalerInventory = () => {
     newEditingRows.add(id);
     setEditingRows(newEditingRows);
   };
-
-  const handleCancelEdit = (id) => {
-    const newEditingRows = new Set(editingRows);
-    newEditingRows.delete(id);
-    setEditingRows(newEditingRows);
-    fetchMedicines();
-  };
-
+const handleCancelEdit = (id) => {
+  const newEditingRows = new Set(editingRows);
+  newEditingRows.delete(id);
+  setEditingRows(newEditingRows);
+  
+  // Clear image preview for this medicine
+  const medicine = inventoryData.find(med => med.id === id);
+  if (medicine?.imagePreview && medicine.imagePreview.startsWith('blob:')) {
+    URL.revokeObjectURL(medicine.imagePreview);
+  }
+  
+  fetchMedicines(); // Refresh data
+};
+  
+  
   const handleMedicineUpdate = (id, field, value) => {
-    // This would need to be implemented based on your state structure
-    console.log("Update medicine:", id, field, value);
+    console.log(`Update medicine: ${id} ${field} ${value}`);
+    
+    // Use the updateLocalMedicine function from the hook
+    updateLocalMedicine(id, { [field]: value });
+    
+    console.log(`Updated medicine ${id}: ${field} = ${value}`);
   };
 
   const handleExistingImageUpload = (id, file) => {
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        alert("❌ Image size should be less than 2MB");
-        return;
-      }
-      
-      const imageUrl = URL.createObjectURL(file);
-      // This would need to update the state
-      console.log("Upload image for:", id, file);
+  if (file) {
+    if (file.size > 2 * 1024 * 1024) {
+      alert("❌ Image size should be less than 2MB");
+      return;
     }
-  };
+    
+    const imageUrl = URL.createObjectURL(file);
+    
+    // Update local state immediately for preview
+    updateLocalMedicine(id, { imagePreview: imageUrl });
+    
+    // Store the file for when we save
+    setPendingImageUpdates(prev => ({
+      ...prev,
+      [id]: file
+    }));
+    
+    console.log("Image uploaded for medicine:", id);
+  }
+};
 
   const handleNewRowUpdate = (id, field, value) => {
     setNewRows((prev) => 
@@ -513,31 +589,55 @@ const WholesalerInventory = () => {
       setSaving(false);
     }
   };
-
-  const handleUpdateMedicine = async (medicine) => {
-    try {
-      setUpdatingRows(prev => new Set(prev).add(medicine.id));
-      
-      // Use the hook to update medicine
-      await updateMedicine(medicine.id, medicine);
-      
-      // Remove from editing set
-      const newEditingRows = new Set(editingRows);
-      newEditingRows.delete(medicine.id);
-      setEditingRows(newEditingRows);
-
-      alert("✅ Medicine updated successfully!");
-    } catch (error) {
-      console.error("❌ Error updating medicine:", error);
-      alert(`❌ Failed to update medicine: ${error.response?.data?.message || error.message}`);
-    } finally {
-      setUpdatingRows(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(medicine.id);
-        return newSet;
-      });
+const handleUpdateMedicine = async (medicine) => {
+  try {
+    setUpdatingRows(prev => new Set(prev).add(medicine.id));
+    
+    // Prepare medicine data
+    const medicineData = { ...medicine };
+    
+    // If there's an imageFile, include it
+    if (medicine.imageFile) {
+      medicineData.image = medicine.imageFile;
     }
-  };
+    
+    // Use the hook to update medicine
+    await updateMedicine(medicine.id, medicineData);
+    
+    // Remove from editing set
+    const newEditingRows = new Set(editingRows);
+    newEditingRows.delete(medicine.id);
+    setEditingRows(newEditingRows);
+    
+    // Clear image preview if it exists
+    if (medicine.imagePreview && medicine.imagePreview.startsWith('blob:')) {
+      URL.revokeObjectURL(medicine.imagePreview);
+    }
+    
+    alert("✅ Medicine updated successfully!");
+  } catch (error) {
+    console.error("❌ Error updating medicine:", error);
+    
+    let errorMessage = "Failed to update medicine.";
+    
+    if (error.response?.data?.message) {
+      errorMessage = error.response.data.message;
+    } else if (error.response?.data) {
+      errorMessage = JSON.stringify(error.response.data);
+    } else if (error.message) {
+      errorMessage = error.message;
+    }
+    
+    alert(`❌ ${errorMessage}`);
+    
+    // Keep the medicine in editing mode so user can try again
+    setUpdatingRows(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(medicine.id);
+      return newSet;
+    });
+  }
+};
 
   const handleDeleteMedicine = async (id) => {
     const confirmDelete = window.confirm("Are you sure you want to delete this medicine?");
@@ -689,6 +789,15 @@ const WholesalerInventory = () => {
     return `$${parseFloat(amount).toFixed(2)}`;
   };
 
+  // Add this function to filter by stock status
+  const filterByStockStatus = (medicine) => {
+    if (selectedStockFilter === 'all') return true;
+    if (selectedStockFilter === 'low' && medicine.stock_qty < 100) return true;
+    if (selectedStockFilter === 'medium' && medicine.stock_qty >= 100 && medicine.stock_qty <= 200) return true;
+    if (selectedStockFilter === 'high' && medicine.stock_qty > 200) return true;
+    return false;
+  };
+
   const filteredData = useMemo(() => {
     let data = [...inventoryData];
     
@@ -703,6 +812,11 @@ const WholesalerInventory = () => {
     
     if (selectedCategory) {
       data = data.filter((i) => i.category === selectedCategory);
+    }
+    
+    // Apply stock filter
+    if (selectedStockFilter !== 'all') {
+      data = data.filter(filterByStockStatus);
     }
     
     data.sort((a, b) => {
@@ -746,7 +860,7 @@ const WholesalerInventory = () => {
     });
     
     return data;
-  }, [inventoryData, searchQuery, selectedCategory, sortBy, sortOrder]);
+  }, [inventoryData, searchQuery, selectedCategory, selectedStockFilter, sortBy, sortOrder]);
 
   const visibleData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -1313,18 +1427,6 @@ const WholesalerInventory = () => {
               )}
               <div>
                 <h2 className="text-xl lg:text-2xl font-bold text-white">Inventory Management</h2>
-                <div className="mt-1 lg:mt-2 text-xs lg:text-sm text-gray-300">
-                  <span>Logged in as: </span>
-                  <span className="font-semibold text-blue-300">
-                    {getUserData()?.email || 'Unknown User'}
-                  </span>
-                  <span className="mx-1 lg:mx-2">•</span>
-                  <span>Showing {inventoryData.length} medicines</span>
-                  <span className="mx-1 lg:mx-2">•</span>
-                  <span className={inventoryData.length === 0 ? 'text-yellow-400' : 'text-green-400'}>
-                    {inventoryData.length === 0 ? 'No medicines' : `${getLowStockCount()} low stock`}
-                  </span>
-                </div>
               </div>
             </div>
 
@@ -1421,6 +1523,102 @@ const WholesalerInventory = () => {
                   </button>
                 </div>
 
+                {/* Stock Filter Button */}
+                <div className="relative stock-filter-container">
+                  <button
+                    onClick={() => setShowStockFilter(!showStockFilter)}
+                    className={`px-3 py-2 border rounded text-sm font-medium transition-colors flex items-center gap-2 ${
+                      selectedStockFilter !== 'all'
+                        ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-500/25'
+                        : 'bg-gray-800/50 border-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+                    }`}
+                  >
+                    {selectedStockFilter === 'all' && <BarChart3 size={14} />}
+                    {selectedStockFilter === 'low' && <TrendingDown size={14} className="text-red-400" />}
+                    {selectedStockFilter === 'medium' && <Minus size={14} className="text-yellow-400" />}
+                    {selectedStockFilter === 'high' && <TrendingUp size={14} className="text-green-400" />}
+                    {selectedStockFilter === 'all' ? 'Stock' : selectedStockFilter === 'low' ? 'Low Stock' : selectedStockFilter === 'medium' ? 'Medium Stock' : 'High Stock'}
+                  </button>
+                  
+                  {/* Stock Filter Dropdown */}
+                  {showStockFilter && (
+                    <div className="absolute top-full left-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                      <div className="p-2">
+                        <div className="text-xs text-gray-400 uppercase font-semibold mb-2 px-2">Filter by Stock</div>
+                        
+                        <button
+                          onClick={() => {
+                            setSelectedStockFilter('all');
+                            setShowStockFilter(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm mb-1 ${
+                            selectedStockFilter === 'all'
+                              ? 'bg-purple-600 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <span>All Stock</span>
+                          <BarChart3 size={14} />
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setSelectedStockFilter('low');
+                            setShowStockFilter(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm mb-1 ${
+                            selectedStockFilter === 'low'
+                              ? 'bg-red-600 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                            <span>Low Stock (&lt;100)</span>
+                          </div>
+                          <TrendingDown size={14} />
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setSelectedStockFilter('medium');
+                            setShowStockFilter(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm mb-1 ${
+                            selectedStockFilter === 'medium'
+                              ? 'bg-yellow-600 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                            <span>Medium Stock (100-200)</span>
+                          </div>
+                          <Minus size={14} />
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setSelectedStockFilter('high');
+                            setShowStockFilter(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm ${
+                            selectedStockFilter === 'high'
+                              ? 'bg-green-600 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            <span>High Stock (&gt;200)</span>
+                          </div>
+                          <TrendingUp size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   onClick={() => setEditMode(!editMode)}
                   className={`px-3 py-2 border rounded text-sm font-medium transition-colors flex items-center gap-2 ${
@@ -1446,6 +1644,21 @@ const WholesalerInventory = () => {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Stock Filter Status Display */}
+            <div className="flex flex-wrap gap-2 mt-3">
+              <span className="text-xs text-gray-400">
+                Total: {inventoryData.length} | 
+                <span className="text-red-400 ml-1"> Low: {inventoryData.filter(m => m.stock_qty < 100).length}</span> | 
+                <span className="text-yellow-400 ml-1"> Medium: {inventoryData.filter(m => m.stock_qty >= 100 && m.stock_qty <= 200).length}</span> | 
+                <span className="text-green-400 ml-1"> High: {inventoryData.filter(m => m.stock_qty > 200).length}</span>
+              </span>
+              {selectedStockFilter !== 'all' && (
+                <span className="text-xs bg-purple-600/20 text-purple-300 px-2 py-1 rounded">
+                  Filter: {selectedStockFilter === 'low' ? 'Low Stock' : selectedStockFilter === 'medium' ? 'Medium Stock' : 'High Stock'}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1904,6 +2117,11 @@ const WholesalerInventory = () => {
                       <div className="text-sm text-gray-400">
                         Showing {visibleData.length} of {filteredData.length} medicines
                         {newRows.length > 0 && ` + ${newRows.length} new`}
+                        {selectedStockFilter !== 'all' && (
+                          <span className="ml-2 text-purple-300">
+                            (Filtered by {selectedStockFilter === 'low' ? 'Low' : selectedStockFilter === 'medium' ? 'Medium' : 'High'} Stock)
+                          </span>
+                        )}
                       </div>
                       <div className="flex space-x-2">
                         <button
